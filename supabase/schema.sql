@@ -152,3 +152,35 @@ for each row execute procedure public.handle_new_user();
 
 -- After creating your own account, run this once, replacing ramy with your login username:
 -- update profiles set is_admin = true where username = 'ramy';
+
+-- Enable Supabase Realtime for live table updates.
+-- Safe to run more than once.
+alter table public.tables replica identity full;
+alter table public.table_seats replica identity full;
+alter table public.ledger_entries replica identity full;
+alter table public.hands replica identity full;
+alter table public.table_messages replica identity full;
+
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.tables;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.table_seats;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.ledger_entries;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.hands;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.table_messages;
+  exception when duplicate_object then null;
+  end;
+end $$;

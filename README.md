@@ -58,3 +58,9 @@ This build adds a real poker-room table view:
 - Multi-board display inside the felt for Pastrami, CostaRica, and Get Fucked visual testing.
 
 Important: the action tray is a visual/testing layer on top of the current manual pot system. Fully enforced betting flow, legal action calculation, automatic winners, and side pots are the next engine milestone.
+
+
+## v0.3.1
+- Adds explicit refresh after writes.
+- Adds a 2.5-second sync fallback in case Supabase Realtime is not yet enabled.
+- Adds SQL to enable Supabase Realtime publication for Romulus tables.

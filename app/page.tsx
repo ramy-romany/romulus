@@ -221,6 +221,8 @@ export default function HomePage() {
   const [manualBetDollars, setManualBetDollars] = useState("25");
   const [clockTick, setClockTick] = useState(Date.now());
   const [notice, setNotice] = useState("");
+  const [realtimeStatus, setRealtimeStatus] = useState("connecting");
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [feltTheme, setFeltTheme] = useState<
     "green" | "blue" | "burgundy" | "black"
   >("green");
@@ -291,6 +293,10 @@ export default function HomePage() {
       return;
     }
     refreshTable(activeTableId);
+    setRealtimeStatus("connecting");
+    const poller = window.setInterval(() => {
+      refreshTable(activeTableId);
+    }, 2500);
     const channel = supabase
       .channel(`romulus-table-${activeTableId}`)
       .on(
@@ -343,8 +349,12 @@ export default function HomePage() {
         },
         () => refreshTable(activeTableId),
       )
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeStatus(status);
+        if (status === "SUBSCRIBED") refreshTable(activeTableId);
+      });
     return () => {
+      window.clearInterval(poller);
       supabase.removeChannel(channel);
     };
   }, [activeTableId]);
@@ -450,6 +460,7 @@ export default function HomePage() {
     setMessages((messagesRes.data ?? []) as TableMessage[]);
     setLedger((ledgerRes.data ?? []) as LedgerEntry[]);
     setHands((handsRes.data ?? []) as Hand[]);
+    setLastSyncAt(Date.now());
   }
 
   async function createTable() {
@@ -612,6 +623,7 @@ export default function HomePage() {
         body,
       });
     if (error) setNotice(error.message);
+    else await refreshTable(activeTableId);
   }
 
   async function postSystemMessage(tableId: string, body: string) {
@@ -619,6 +631,7 @@ export default function HomePage() {
     await supabase
       .from("table_messages")
       .insert({ table_id: tableId, user_id: profile.id, kind: "system", body });
+    if (tableId === activeTableId) await refreshTable(tableId);
   }
 
   async function updateTablePatch(patch: Partial<PokerTable>) {
@@ -628,6 +641,7 @@ export default function HomePage() {
       .update(patch)
       .eq("id", activeTableId);
     if (error) setNotice(error.message);
+    else await refreshTable(activeTableId);
   }
 
   async function chooseGame(gameId: string) {
@@ -846,6 +860,7 @@ export default function HomePage() {
       .update(update)
       .eq("id", hand.id);
     if (error) setNotice(error.message);
+    else if (activeTableId) await refreshTable(activeTableId);
   }
 
   function finishBettingRound(state: RomulusHandState): RomulusHandState {
@@ -1327,8 +1342,8 @@ export default function HomePage() {
               settlement optimizer.
             </p>
             <p className="muted">
-              Hand ranking and fully enforced betting come next. This v0.2
-              version is for real-time table testing.
+              This v0.3 version adds 6-max gameplay flow. Automatic hand ranking,
+              side pots, and advanced split-pot resolution come next.
             </p>
           </div>
         </section>
@@ -1347,6 +1362,12 @@ export default function HomePage() {
             </span>
             {profile?.is_admin && <span className="pill">Admin</span>}
             {activeTable && <span className="pill">{activeTable.name}</span>}
+            {activeTable && (
+              <span className="pill">
+                Sync: {realtimeStatus}
+                {lastSyncAt ? ` · ${new Date(lastSyncAt).toLocaleTimeString()}` : ""}
+              </span>
+            )}
           </div>
         </div>
         <button className="secondary" onClick={signOut}>
