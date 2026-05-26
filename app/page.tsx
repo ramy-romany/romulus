@@ -368,39 +368,82 @@ export default function HomePage() {
   }
 
   async function startHand() {
-    if (!activeTable || !activeTableId || !profile) return;
-    const activeSeats = seats.filter((seat) => seat.is_active && seat.stack_cents > 0);
-    if (activeSeats.length < 2) {
-      setNotice('Need at least two players with chips to start a hand.');
-      return;
-    }
-    const gameId = activeTable.current_game_id || 'nlh';
-    const game = findGame(gameId);
-    if (!playableWith(game, activeSeats.length)) {
-      setNotice(`${game.displayName} does not have enough cards for ${activeSeats.length} players.`);
-      return;
-    }
-    const handNumber = (hands[0]?.hand_number ?? 0) + 1;
-    const bombPotCents = activeTable.bomb_pot_cents ?? activeTable.default_bomb_pot_cents;
-    const state = createInitialHandState({ handNumber, gameId, seatedPlayers: activeSeats as SeatForDeal[], bombPotCents, requireApproval: activeTable.require_result_approval });
+    try {
+      setNotice('Starting hand…');
 
-    if (game.isBombPotDefault) {
-      for (const seat of activeSeats) {
-        await supabase.from('table_seats').update({ stack_cents: Math.max(0, seat.stack_cents - bombPotCents) }).eq('table_id', activeTableId).eq('user_id', seat.user_id);
+      if (!activeTableId) {
+        setNotice('No active table selected.');
+        return;
       }
-    }
+      if (!activeTable) {
+        setNotice('Table data is still loading. Wait one second and try again.');
+        return;
+      }
+      if (!profile) {
+        setNotice('Profile is still loading. Sign out and back in if this continues.');
+        return;
+      }
 
-    const dealer = seats.find((seat) => seat.seat_number === activeTable.button_seat) ?? activeSeats[0];
-    const { error } = await supabase.from('hands').insert({
-      table_id: activeTableId,
-      hand_number: handNumber,
-      game_id: gameId,
-      dealer_user_id: dealer?.user_id ?? null,
-      result_status: 'pending',
-      summary: state,
-    });
-    if (error) setNotice(error.message);
-    else await postSystemMessage(activeTableId, `Hand #${handNumber} started: ${game.displayName}.`);
+      const activeSeats = seats.filter((seat) => seat.is_active && seat.stack_cents > 0);
+      if (activeSeats.length < 2) {
+        setNotice('Need at least two seated players with chips to start a hand.');
+        return;
+      }
+
+      const gameId = activeTable.current_game_id || 'nlh';
+      const game = findGame(gameId);
+      if (!playableWith(game, activeSeats.length)) {
+        setNotice(`${game.displayName} does not have enough cards for ${activeSeats.length} players.`);
+        return;
+      }
+
+      const handNumber = (hands[0]?.hand_number ?? 0) + 1;
+      const bombPotCents = activeTable.bomb_pot_cents ?? activeTable.default_bomb_pot_cents;
+      const state = createInitialHandState({
+        handNumber,
+        gameId,
+        seatedPlayers: activeSeats as SeatForDeal[],
+        bombPotCents,
+        requireApproval: activeTable.require_result_approval,
+      });
+
+      if (game.isBombPotDefault) {
+        for (const seat of activeSeats) {
+          const { error: stackError } = await supabase
+            .from('table_seats')
+            .update({ stack_cents: Math.max(0, seat.stack_cents - bombPotCents) })
+            .eq('table_id', activeTableId)
+            .eq('user_id', seat.user_id);
+          if (stackError) {
+            setNotice(`Could not post bomb pot for seat ${seat.seat_number}: ${stackError.message}`);
+            return;
+          }
+        }
+      }
+
+      const dealer = seats.find((seat) => seat.seat_number === activeTable.button_seat) ?? activeSeats[0];
+      const { error } = await supabase.from('hands').insert({
+        table_id: activeTableId,
+        hand_number: handNumber,
+        game_id: gameId,
+        dealer_user_id: dealer?.user_id ?? null,
+        result_status: 'pending',
+        summary: state,
+      });
+
+      if (error) {
+        setNotice(`Could not start hand: ${error.message}`);
+        return;
+      }
+
+      await postSystemMessage(activeTableId, `Hand #${handNumber} started: ${game.displayName}.`);
+      await refreshTable(activeTableId);
+      setNotice(`Hand #${handNumber} started.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(error);
+      setNotice(`Start hand crashed: ${message}`);
+    }
   }
 
   async function updateActiveHand(state: RomulusHandState, resultStatus?: Hand['result_status']) {
