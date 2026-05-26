@@ -44,3 +44,14 @@ Private real-time poker web app for invite-only dealer's choice cash games with 
 
 ## Real-money note
 This app includes no payment processor, no rake, no public signup, and no casino/house role. It is designed as a private game/ledger between friends.
+
+## Cloudflare Pages install note
+This package intentionally does not include package-lock.json. The app should install from the public npm registry during Cloudflare Pages builds.
+Recommended Pages build command:
+
+npm install --no-audit --no-fund --legacy-peer-deps --registry=https://registry.npmjs.org && npm run build
+
+Recommended output directory: out
+Recommended environment variables:
+NODE_VERSION=20.19.0
+SKIP_DEPENDENCY_INSTALL=true
