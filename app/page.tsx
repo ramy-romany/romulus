@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent } from "react";
+import type { PointerEvent, TouchEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { GAME_CATALOG, playableWith } from "@/lib/game-engine/games";
 import type { Card } from "@/lib/game-engine/types";
@@ -14,6 +14,7 @@ import {
 } from "@/lib/game-engine/handState";
 import { formatCard, cardColor } from "@/lib/game-engine/cards";
 import { optimizeSettlement } from "@/lib/game-engine/settlement";
+import { resolveShowdown } from "@/lib/game-engine/handEvaluator";
 import { centsToDollars, dollarsToCents } from "@/lib/money";
 import { supabase, supabaseReady } from "@/lib/supabaseClient";
 
@@ -905,6 +906,51 @@ export default function HomePage() {
     return next;
   }
 
+  async function autoResolveShowdown(state: RomulusHandState): Promise<boolean> {
+    if (!activeTableId || state.resultApplied || (state.potCents ?? 0) <= 0) return false;
+    const resolution = resolveShowdown(state);
+    state.messages.push(...resolution.messages);
+
+    if (!resolution.supported) {
+      await updateActiveHand(state);
+      return false;
+    }
+
+    for (const [userId, payout] of Object.entries(resolution.payoutsByUserId)) {
+      if (payout <= 0) continue;
+      const seat = seats.find((item) => item.user_id === userId);
+      if (!seat) continue;
+      const { error } = await supabase
+        .from("table_seats")
+        .update({ stack_cents: seat.stack_cents + payout })
+        .eq("table_id", activeTableId)
+        .eq("user_id", userId);
+      if (error) {
+        setNotice(`Could not pay showdown winner: ${error.message}`);
+        return false;
+      }
+    }
+
+    state.showdownResult = {
+      payoutsByUserId: resolution.payoutsByUserId,
+      highWinnerIds: resolution.highWinnerIds,
+      lowWinnerIds: resolution.lowWinnerIds,
+      messages: resolution.messages,
+    };
+    state.resultApplied = true;
+    state.potCents = 0;
+    state.street = "complete";
+    state.gameplayStatus = "complete";
+    state.actingUserId = null;
+    state.messages.push("Showdown payouts applied automatically.");
+    await updateActiveHand(
+      state,
+      activeTable?.require_result_approval ? "pending" : "approved",
+    );
+    if (activeTableId) await refreshTable(activeTableId);
+    return true;
+  }
+
   async function resolveAndSaveGameplayState(state: RomulusHandState) {
     ensureGameplayState(state);
     const remaining = activeGameplayPlayers(state);
@@ -932,6 +978,10 @@ export default function HomePage() {
 
     if (canAct.length <= 1 || bettingRoundComplete(state)) {
       state = finishBettingRound(state);
+      if (state.gameplayStatus === "showdown") {
+        const resolved = await autoResolveShowdown(state);
+        if (resolved) return;
+      }
     } else {
       const currentActor = state.players?.find((player) => player.userId === state.actingUserId);
       state.actingUserId = nextActingPlayer(state, currentActor?.seatNumber ?? state.dealerSeat ?? 1);
@@ -1031,7 +1081,10 @@ export default function HomePage() {
         state.currentBetCents - oldBet,
       );
       state.actedUserIds = [profile.id];
-      state.messages.push(`${player.name} raised to ${centsToDollars(state.currentBetCents)}.`);
+      const wasOpeningBet = oldBet <= 0;
+      state.messages.push(
+        `${player.name} ${wasOpeningBet ? "bet" : "raised to"} ${centsToDollars(state.currentBetCents)}.`,
+      );
     } else {
       state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), profile.id])];
       if (callCents > 0) {
@@ -1048,6 +1101,10 @@ export default function HomePage() {
     if (!activeHand) return;
     const state = deepCopyHandState(activeHand.summary);
     const next = finishBettingRound(state);
+    if (next.gameplayStatus === "showdown") {
+      const resolved = await autoResolveShowdown(next);
+      if (resolved) return;
+    }
     await updateActiveHand(next);
   }
 
@@ -1829,12 +1886,42 @@ function PokerRoom({
     if (!start || !activeHand) return;
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
-    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+    if (Math.hypot(dx, dy) > 70) {
       if (gameplayControls.isMyTurn) onFold();
       return;
     }
     const now = Date.now();
     if (now - lastTapTime.current < 320) {
+      if (gameplayControls.isMyTurn && gameplayControls.canCheck) {
+        onCallOrCheck();
+      }
+      lastTapTime.current = 0;
+      return;
+    }
+    lastTapTime.current = now;
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    pointerStart.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+  }
+
+  function handleTouchEnd(event: TouchEvent<HTMLElement>) {
+    const touch = event.changedTouches[0];
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!touch || !start || !activeHand) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.hypot(dx, dy) > 70) {
+      event.preventDefault();
+      if (gameplayControls.isMyTurn) onFold();
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTapTime.current < 320) {
+      event.preventDefault();
       if (gameplayControls.isMyTurn && gameplayControls.canCheck) {
         onCallOrCheck();
       }
@@ -2047,6 +2134,9 @@ function PokerRoom({
           className="my-hand-panel gesture-zone"
           onPointerDown={handleGestureStart}
           onPointerUp={handleGestureEnd}
+          onTouchStart={handleTouchStart}
+          onTouchMove={(event) => event.preventDefault()}
+          onTouchEnd={handleTouchEnd}
         >
           <div>
             <small className="muted">
@@ -2101,7 +2191,7 @@ function PokerRoom({
               onClick={() => onRaise(raiseTargetCents)}
               disabled={!gameplayControls.isMyTurn || !gameplayControls.canRaise}
             >
-              Raise to {raiseTargetDollars}
+              {activeHand?.summary.currentBetCents ? "Raise to" : "Bet"} {raiseTargetDollars}
             </button>
           </div>
           <div className="raise-slider-box">

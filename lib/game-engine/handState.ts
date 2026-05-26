@@ -50,6 +50,13 @@ export type RomulusHandState = {
   players?: GameplayPlayerState[];
   gameplayStatus?: 'betting' | 'showdown' | 'complete';
   lastActionAt?: string;
+  resultApplied?: boolean;
+  showdownResult?: {
+    payoutsByUserId: Record<string, number>;
+    highWinnerIds: string[];
+    lowWinnerIds: string[];
+    messages: string[];
+  };
 };
 
 export type SeatForDeal = {

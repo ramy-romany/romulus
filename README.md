@@ -64,3 +64,12 @@ Important: the action tray is a visual/testing layer on top of the current manua
 - Adds explicit refresh after writes.
 - Adds a 2.5-second sync fallback in case Supabase Realtime is not yet enabled.
 - Adds SQL to enable Supabase Realtime publication for Romulus tables.
+
+## v0.3.2
+- Adds automatic showdown resolution for NLH, Omaha/PLO, PLO Hi/Lo, Pastrami, CostaRica-style high-across-board games, Get Fucked remaining-board high/low, and first-pass Stud high scoring.
+- Applies showdown payouts to stacks automatically; admin approval can still be used as a review/status flag.
+- Fixes poker wording: unopened action is Bet; only action over an existing bet is Raise.
+- Improves iPhone gestures: card panel uses touch-action none so swiping the cards away can fold instead of scrolling the page.
+- Enlarges the logged-in user's cards and community board cards; opponent cards are smaller.
+
+Still next: side pots, full server-side trusted actions, Stud Minnesota replacement-card choice, and deeper split-pot edge cases.

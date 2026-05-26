@@ -253,3 +253,66 @@ input[type="range"] { padding:0; accent-color:#e8c66d; height:34px; }
   .hand-log-strip { padding:0 4px 8px; font-size:11px; }
   .message-list { max-height:220px; }
 }
+
+/* Romulus v0.3.2 card sizing + gesture reliability */
+.gesture-zone {
+  touch-action: none;
+  overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.my-hand-panel {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+.hero-card-row .card-face.hero-card {
+  min-width: 66px;
+  height: 92px;
+  border-radius: 14px;
+  font-size: 24px;
+  margin: 4px;
+}
+.felt-board .card-face {
+  min-width: 48px;
+  height: 66px;
+  border-radius: 10px;
+  font-size: 18px;
+  margin: 3px;
+}
+.table-seat-pod:not(.is-me) .card-face {
+  min-width: 22px;
+  height: 31px;
+  border-radius: 5px;
+  font-size: 9px;
+  margin: 1px;
+}
+.table-seat-pod:not(.is-me) .card-back {
+  width: 16px;
+  height: 23px;
+}
+@media (max-width: 760px) {
+  .hero-card-row .card-face.hero-card {
+    min-width: 62px;
+    height: 86px;
+    border-radius: 13px;
+    font-size: 22px;
+    margin: 3px;
+  }
+  .felt-board .card-face {
+    min-width: 41px;
+    height: 57px;
+    border-radius: 9px;
+    font-size: 15px;
+    margin: 2px;
+  }
+  .table-seat-pod:not(.is-me) .card-face {
+    min-width: 19px;
+    height: 27px;
+    font-size: 8px;
+  }
+  .my-hand-panel {
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+  }
+}
