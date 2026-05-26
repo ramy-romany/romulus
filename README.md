@@ -44,3 +44,17 @@ Private real-time poker web app for invite-only dealer's choice cash games with 
 
 ## Real-money note
 This app includes no payment processor, no rake, no public signup, and no casino/house role. It is designed as a private game/ledger between friends.
+
+
+## v0.2.4 Poker Room UI Pass
+
+This build adds a real poker-room table view:
+
+- Logged-in player is visually anchored at the bottom-center seat.
+- Opponents rotate around the table relative to the current user.
+- Oval felt table, rail, pot stack, board area, and seat pods.
+- Visible hero hand/action tray with Fold, Call/Post, Pot, Raise, Show, Muck, Deal, and Approve controls.
+- Theme controls for felt color, card back color, deck mode, and room style.
+- Multi-board display inside the felt for Pastrami, CostaRica, and Get Fucked visual testing.
+
+Important: the action tray is a visual/testing layer on top of the current manual pot system. Fully enforced betting flow, legal action calculation, automatic winners, and side pots are the next engine milestone.
