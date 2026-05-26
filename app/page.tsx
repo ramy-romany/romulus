@@ -207,6 +207,12 @@ export default function HomePage() {
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordNotice, setPasswordNotice] = useState("");
+  const [autoStartNextHand, setAutoStartNextHand] = useState(true);
+
+  const autoResolveKeyRef = useRef("");
+  const autoNextHandKeyRef = useRef("");
 
   const [tables, setTables] = useState<PokerTable[]>([]);
   const [activeTableId, setActiveTableId] = useState<string>("");
@@ -407,6 +413,22 @@ export default function HomePage() {
   async function signOut() {
     await supabase.auth.signOut();
     setActiveTableId("");
+  }
+
+  async function changePassword() {
+    setPasswordNotice("");
+    const trimmed = newPassword.trim();
+    if (trimmed.length < 8) {
+      setPasswordNotice("Use at least 8 characters for the new password.");
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: trimmed });
+    if (error) {
+      setPasswordNotice(error.message);
+      return;
+    }
+    setNewPassword("");
+    setPasswordNotice("Password updated.");
   }
 
   async function loadTables() {
@@ -664,18 +686,12 @@ export default function HomePage() {
     await chooseGame(game.id);
   }
 
-  async function startHand() {
+  async function startHand(options?: { force?: boolean; reason?: string }) {
     try {
-      setNotice("Starting hand…");
+      setNotice(options?.reason ?? "Starting hand…");
 
       if (!activeTableId) {
         setNotice("No active table selected.");
-        return;
-      }
-      if (!activeTable) {
-        setNotice(
-          "Table data is still loading. Wait one second and try again.",
-        );
         return;
       }
       if (!profile) {
@@ -685,8 +701,58 @@ export default function HomePage() {
         return;
       }
 
+      const [freshTableRes, freshSeatsRes, freshHandsRes] = await Promise.all([
+        supabase.from("tables").select("*").eq("id", activeTableId).maybeSingle(),
+        supabase
+          .from("table_seats")
+          .select("*, profiles(username, display_name)")
+          .eq("table_id", activeTableId)
+          .order("seat_number"),
+        supabase
+          .from("hands")
+          .select("*")
+          .eq("table_id", activeTableId)
+          .order("hand_number", { ascending: false })
+          .limit(1),
+      ]);
+
+      if (freshTableRes.error) {
+        setNotice(`Could not load table: ${freshTableRes.error.message}`);
+        return;
+      }
+      if (freshSeatsRes.error) {
+        setNotice(`Could not load seats: ${freshSeatsRes.error.message}`);
+        return;
+      }
+      if (freshHandsRes.error) {
+        setNotice(`Could not load hands: ${freshHandsRes.error.message}`);
+        return;
+      }
+
+      const table = freshTableRes.data as PokerTable | null;
+      if (!table) {
+        setNotice("Table data is still loading. Wait one second and try again.");
+        return;
+      }
+
+      const latestHand = ((freshHandsRes.data ?? [])[0] as Hand | undefined) ?? null;
+      const latestState = latestHand?.summary;
+      const latestIsOpen = Boolean(
+        latestHand &&
+          latestState &&
+          latestState.gameplayStatus !== "complete" &&
+          latestState.street !== "complete",
+      );
+      if (latestIsOpen && !options?.force) {
+        setNotice(
+          "Finish or resolve the current hand before starting another one so the pot cannot disappear into an old hand.",
+        );
+        return;
+      }
+
+      const freshSeats = (freshSeatsRes.data ?? []) as Seat[];
       const activeSeats: Seat[] = orderedSeats(
-        seats.filter((seat) => seat.is_active && seat.stack_cents > 0),
+        freshSeats.filter((seat) => seat.is_active && seat.stack_cents > 0),
       );
       if (activeSeats.length < 2) {
         setNotice(
@@ -699,7 +765,7 @@ export default function HomePage() {
         return;
       }
 
-      const gameId = activeTable.current_game_id || "nlh";
+      const gameId = table.current_game_id || "nlh";
       const game = findGame(gameId);
       if (!playableWith(game, activeSeats.length)) {
         setNotice(
@@ -708,25 +774,26 @@ export default function HomePage() {
         return;
       }
 
-      const handNumber = (hands[0]?.hand_number ?? 0) + 1;
+      const handNumber = (latestHand?.hand_number ?? 0) + 1;
       const bombPotCents =
-        activeTable.bomb_pot_cents ?? activeTable.default_bomb_pot_cents;
+        table.bomb_pot_cents ?? table.default_bomb_pot_cents;
       let state = createInitialHandState({
         handNumber,
         gameId,
         seatedPlayers: activeSeats as SeatForDeal[],
         bombPotCents,
-        requireApproval: activeTable.require_result_approval,
+        requireApproval: table.require_result_approval,
       });
       state.version = 3;
       state.maxSeats = MAX_TABLE_SEATS;
-      state.smallBlindCents = activeTable.small_blind_cents;
-      state.bigBlindCents = activeTable.big_blind_cents;
-      state.minRaiseCents = activeTable.big_blind_cents;
+      state.smallBlindCents = table.small_blind_cents;
+      state.bigBlindCents = table.big_blind_cents;
+      state.minRaiseCents = table.big_blind_cents;
       state.currentBetCents = 0;
       state.actedUserIds = [];
       state.streetContribByUserId = {};
       state.gameplayStatus = "betting";
+      state.resultApplied = false;
       state.players = activeSeats.map((seat) => ({
         userId: seat.user_id,
         seatNumber: seat.seat_number,
@@ -737,7 +804,7 @@ export default function HomePage() {
       }));
 
       const dealer =
-        activeSeats.find((seat) => seat.seat_number === activeTable.button_seat) ??
+        activeSeats.find((seat) => seat.seat_number === table.button_seat) ??
         activeSeats[0];
       state.dealerSeat = dealer.seat_number;
 
@@ -752,12 +819,11 @@ export default function HomePage() {
           const player = state.players!.find((item) => item.userId === seat.user_id);
           if (player && seat.stack_cents - posted <= 0) player.allIn = true;
         }
-        // Bomb-pot community-card games start with the flop already dealt.
         if (game.family !== "stud") {
           state = advanceCommunityStreet(state);
         }
         state.currentBetCents = 0;
-        state.minRaiseCents = activeTable.big_blind_cents;
+        state.minRaiseCents = table.big_blind_cents;
         state.actedUserIds = [];
         state.streetContribByUserId = {};
         state.actingUserId = firstPostflopActor(state);
@@ -765,8 +831,8 @@ export default function HomePage() {
         const smallBlindSeat = nextOccupiedSeat(activeSeats, dealer.seat_number) ?? activeSeats[0];
         const bigBlindSeat =
           nextOccupiedSeat(activeSeats, smallBlindSeat.seat_number) ?? smallBlindSeat;
-        const sb = Math.min(smallBlindSeat.stack_cents, activeTable.small_blind_cents);
-        const bb = Math.min(bigBlindSeat.stack_cents, activeTable.big_blind_cents);
+        const sb = Math.min(smallBlindSeat.stack_cents, table.small_blind_cents);
+        const bb = Math.min(bigBlindSeat.stack_cents, table.big_blind_cents);
         state.potCents += sb + bb;
         state.postedCentsByUserId[smallBlindSeat.user_id] =
           (state.postedCentsByUserId[smallBlindSeat.user_id] ?? 0) + sb;
@@ -775,7 +841,7 @@ export default function HomePage() {
         state.streetContribByUserId[smallBlindSeat.user_id] = sb;
         state.streetContribByUserId[bigBlindSeat.user_id] = bb;
         state.currentBetCents = bb;
-        state.minRaiseCents = activeTable.big_blind_cents;
+        state.minRaiseCents = table.big_blind_cents;
         stackUpdates.push({ userId: smallBlindSeat.user_id, amountCents: sb });
         stackUpdates.push({ userId: bigBlindSeat.user_id, amountCents: bb });
         const sbPlayer = state.players!.find((item) => item.userId === smallBlindSeat.user_id);
@@ -864,6 +930,15 @@ export default function HomePage() {
     else if (activeTableId) await refreshTable(activeTableId);
   }
 
+  function scheduleNextHand(completedHandId: string) {
+    if (!autoStartNextHand || !activeTableId || activeTable?.paused) return;
+    if (autoNextHandKeyRef.current === completedHandId) return;
+    autoNextHandKeyRef.current = completedHandId;
+    window.setTimeout(() => {
+      startHand({ force: true, reason: "Starting next hand…" });
+    }, 1400);
+  }
+
   function finishBettingRound(state: RomulusHandState): RomulusHandState {
     ensureGameplayState(state);
     const game = findGame(state.gameId);
@@ -907,18 +982,63 @@ export default function HomePage() {
   }
 
   async function autoResolveShowdown(state: RomulusHandState): Promise<boolean> {
-    if (!activeTableId || state.resultApplied || (state.potCents ?? 0) <= 0) return false;
-    const resolution = resolveShowdown(state);
-    state.messages.push(...resolution.messages);
+    if (!activeTableId || !activeHand || state.resultApplied || (state.potCents ?? 0) <= 0) return false;
+
+    const { data: latestHandRow, error: latestHandError } = await supabase
+      .from("hands")
+      .select("*")
+      .eq("id", activeHand.id)
+      .maybeSingle();
+    if (latestHandError) {
+      setNotice(`Could not verify hand before resolving: ${latestHandError.message}`);
+      return false;
+    }
+    const latestHand = latestHandRow as Hand | null;
+    if (latestHand?.summary?.resultApplied) return true;
+
+    const workingState = deepCopyHandState(state);
+    ensureGameplayState(workingState);
+
+    // If everyone is all-in before the river, finish running out the board before scoring.
+    const canAct = playersWhoCanAct(workingState);
+    while (
+      canAct.length <= 1 &&
+      workingState.street !== "river" &&
+      workingState.street !== "showdown" &&
+      workingState.street !== "complete"
+    ) {
+      const advanced = advanceCommunityStreet(workingState);
+      Object.assign(workingState, advanced);
+    }
+    if (workingState.street === "river") {
+      workingState.street = "showdown";
+      workingState.gameplayStatus = "showdown";
+      workingState.actingUserId = null;
+      workingState.messages.push("Runout complete. Showdown.");
+    }
+
+    const resolution = resolveShowdown(workingState);
+    workingState.messages.push(...resolution.messages);
 
     if (!resolution.supported) {
-      await updateActiveHand(state);
+      await updateActiveHand(workingState);
+      setNotice(resolution.messages.join(" "));
       return false;
     }
 
+    const { data: freshSeatsData, error: freshSeatsError } = await supabase
+      .from("table_seats")
+      .select("*, profiles(username, display_name)")
+      .eq("table_id", activeTableId);
+    if (freshSeatsError) {
+      setNotice(`Could not load fresh stacks for payout: ${freshSeatsError.message}`);
+      return false;
+    }
+    const freshSeats = (freshSeatsData ?? []) as Seat[];
+
     for (const [userId, payout] of Object.entries(resolution.payoutsByUserId)) {
       if (payout <= 0) continue;
-      const seat = seats.find((item) => item.user_id === userId);
+      const seat = freshSeats.find((item) => item.user_id === userId);
       if (!seat) continue;
       const { error } = await supabase
         .from("table_seats")
@@ -931,23 +1051,24 @@ export default function HomePage() {
       }
     }
 
-    state.showdownResult = {
+    workingState.showdownResult = {
       payoutsByUserId: resolution.payoutsByUserId,
       highWinnerIds: resolution.highWinnerIds,
       lowWinnerIds: resolution.lowWinnerIds,
       messages: resolution.messages,
     };
-    state.resultApplied = true;
-    state.potCents = 0;
-    state.street = "complete";
-    state.gameplayStatus = "complete";
-    state.actingUserId = null;
-    state.messages.push("Showdown payouts applied automatically.");
+    workingState.resultApplied = true;
+    workingState.potCents = 0;
+    workingState.street = "complete";
+    workingState.gameplayStatus = "complete";
+    workingState.actingUserId = null;
+    workingState.messages.push("Showdown payouts applied automatically.");
     await updateActiveHand(
-      state,
+      workingState,
       activeTable?.require_result_approval ? "pending" : "approved",
     );
     if (activeTableId) await refreshTable(activeTableId);
+    if (activeHand?.id) scheduleNextHand(activeHand.id);
     return true;
   }
 
@@ -973,10 +1094,19 @@ export default function HomePage() {
           .eq("user_id", winner.userId);
       }
       await updateActiveHand(state, activeTable?.require_result_approval ? "pending" : "approved");
+      if (activeHand?.id) scheduleNextHand(activeHand.id);
       return;
     }
 
-    if (canAct.length <= 1 || bettingRoundComplete(state)) {
+    if (canAct.length <= 1) {
+      const resolved = await autoResolveShowdown(state);
+      if (resolved) return;
+      state = finishBettingRound(state);
+      if (state.gameplayStatus === "showdown") {
+        const resolvedAfterStreet = await autoResolveShowdown(state);
+        if (resolvedAfterStreet) return;
+      }
+    } else if (bettingRoundComplete(state)) {
       state = finishBettingRound(state);
       if (state.gameplayStatus === "showdown") {
         const resolved = await autoResolveShowdown(state);
@@ -1247,6 +1377,30 @@ export default function HomePage() {
       canRaise: maxRaiseToCents >= minRaiseToCents && mySeat.stack_cents > callCents,
     };
   }, [activeHand, profile?.id, mySeat?.stack_cents, selectedGame.betting, activeTable?.paused]);
+
+  useEffect(() => {
+    if (!profile?.is_admin || !activeHand) return;
+    const state = activeHand.summary;
+    const shouldResolve =
+      !state.resultApplied &&
+      (state.potCents ?? 0) > 0 &&
+      (state.gameplayStatus === "showdown" || state.street === "showdown");
+    if (!shouldResolve) return;
+    const key = `${activeHand.id}:${state.potCents}:${state.street}:${state.messages.length}`;
+    if (autoResolveKeyRef.current === key) return;
+    autoResolveKeyRef.current = key;
+    const timer = window.setTimeout(() => {
+      autoResolveShowdown(deepCopyHandState(state));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [
+    profile?.is_admin,
+    activeHand?.id,
+    activeHand?.summary.gameplayStatus,
+    activeHand?.summary.street,
+    activeHand?.summary.potCents,
+    activeHand?.summary.messages.length,
+  ]);
 
   useEffect(() => {
     if (!gameplayControls.canRaise) return;
@@ -1549,6 +1703,26 @@ export default function HomePage() {
               >
                 Cash Out
               </button>
+              <hr />
+              <h3>Account</h3>
+              <label>
+                New password
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="At least 8 characters"
+                />
+              </label>
+              <br />
+              <button
+                className="secondary"
+                onClick={changePassword}
+                disabled={newPassword.trim().length < 8}
+              >
+                Change Password
+              </button>
+              {passwordNotice && <p className="muted">{passwordNotice}</p>}
             </div>
 
             <div className="card">
@@ -1613,7 +1787,15 @@ export default function HomePage() {
                 />
               </label>
               <br />
-              <button onClick={startHand}>Start Hand</button>
+              <button onClick={() => startHand()}>Start Hand</button>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={autoStartNextHand}
+                  onChange={(event) => setAutoStartNextHand(event.target.checked)}
+                />
+                Auto-start next hand after payout
+              </label>
               <hr />
               <h3>Table Look</h3>
               <label>
@@ -1691,6 +1873,9 @@ export default function HomePage() {
               setManualBetDollars={setManualBetDollars}
               gameplayControls={gameplayControls}
               onAdvanceStreet={advanceStreet}
+              onResolveShowdown={() => {
+                if (activeHand) autoResolveShowdown(deepCopyHandState(activeHand.summary));
+              }}
               onStartClock={startClock}
               onPauseToggle={() =>
                 updateTablePatch({ paused: !activeTable?.paused })
@@ -1805,6 +1990,7 @@ type PokerRoomProps = {
     canRaise: boolean;
   };
   onAdvanceStreet: () => void;
+  onResolveShowdown: () => void;
   onStartClock: () => void;
   onPauseToggle: () => void;
   onFold: () => void;
@@ -1833,6 +2019,7 @@ function PokerRoom({
   setManualBetDollars,
   gameplayControls,
   onAdvanceStreet,
+  onResolveShowdown,
   onStartClock,
   onPauseToggle,
   onFold,
@@ -1886,7 +2073,7 @@ function PokerRoom({
     if (!start || !activeHand) return;
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
-    if (Math.hypot(dx, dy) > 70) {
+    if (Math.abs(dx) > 75 && Math.abs(dx) > Math.abs(dy) * 1.15) {
       if (gameplayControls.isMyTurn) onFold();
       return;
     }
@@ -1902,6 +2089,7 @@ function PokerRoom({
   }
 
   function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    if (gameplayControls.isMyTurn) event.preventDefault();
     const touch = event.touches[0];
     if (!touch) return;
     pointerStart.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
@@ -1914,7 +2102,7 @@ function PokerRoom({
     if (!touch || !start || !activeHand) return;
     const dx = touch.clientX - start.x;
     const dy = touch.clientY - start.y;
-    if (Math.hypot(dx, dy) > 70) {
+    if (Math.abs(dx) > 75 && Math.abs(dx) > Math.abs(dy) * 1.15) {
       event.preventDefault();
       if (gameplayControls.isMyTurn) onFold();
       return;
@@ -2133,6 +2321,7 @@ function PokerRoom({
         <div
           className="my-hand-panel gesture-zone"
           onPointerDown={handleGestureStart}
+          onPointerMove={(event) => { if (gameplayControls.isMyTurn) event.preventDefault(); }}
           onPointerUp={handleGestureEnd}
           onTouchStart={handleTouchStart}
           onTouchMove={(event) => event.preventDefault()}
@@ -2140,7 +2329,7 @@ function PokerRoom({
         >
           <div>
             <small className="muted">
-              Your hand · swipe cards away to fold · double tap to check
+              Your hand · swipe cards left/right to fold · double tap to check
             </small>
             {myHoleCards.length ? (
               <CardRow cards={myHoleCards} deckMode={deckMode} hero />
@@ -2240,6 +2429,11 @@ function PokerRoom({
               >
                 Deal
               </button>
+              {profile?.is_admin && activeHand && activeHand.summary.potCents > 0 && (
+                <button className="mini" onClick={onResolveShowdown}>
+                  Resolve
+                </button>
+              )}
               {profile?.is_admin && activeTable?.require_result_approval && (
                 <button className="mini" onClick={onApproveResult}>
                   Approve
