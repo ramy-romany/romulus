@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { GAME_CATALOG, playableWith } from "@/lib/game-engine/games";
 import type { Card } from "@/lib/game-engine/types";
@@ -82,11 +83,120 @@ type TableMessage = {
 };
 
 const EMPTY_TABLE_NAME = "Friday Night Romulus";
+const MAX_TABLE_SEATS = 6;
 
 function usernameToEmail(username: string) {
   const trimmed = username.trim().toLowerCase();
   if (trimmed.includes("@")) return trimmed;
   return `${trimmed}@romulus.local`;
+}
+
+
+function deepCopyHandState(state: RomulusHandState): RomulusHandState {
+  return JSON.parse(JSON.stringify(state)) as RomulusHandState;
+}
+
+function displayNameForSeat(seat: SeatForDeal | Seat) {
+  return (
+    seat.profiles?.display_name ?? seat.profiles?.username ?? `Seat ${seat.seat_number}`
+  );
+}
+
+function orderedSeats<T extends { seat_number: number }>(items: T[]): T[] {
+  return [...items].sort((a, b) => a.seat_number - b.seat_number);
+}
+
+function nextOccupiedSeat<T extends { seat_number: number }>(
+  seats: T[],
+  fromSeat: number,
+): T | null {
+  const sorted = orderedSeats(seats);
+  if (!sorted.length) return null;
+  return sorted.find((seat) => seat.seat_number > fromSeat) ?? sorted[0];
+}
+
+function nextActingPlayer(
+  state: RomulusHandState,
+  fromSeat: number,
+): string | null {
+  const candidates = (state.players ?? []).filter(
+    (player) => player.inHand && !player.folded && !player.allIn,
+  );
+  if (!candidates.length) return null;
+  const sorted = [...candidates].sort((a, b) => a.seatNumber - b.seatNumber);
+  return (
+    sorted.find((player) => player.seatNumber > fromSeat) ?? sorted[0]
+  ).userId;
+}
+
+function firstPostflopActor(state: RomulusHandState): string | null {
+  return nextActingPlayer(state, state.dealerSeat ?? 1);
+}
+
+function activeGameplayPlayers(state: RomulusHandState) {
+  return (state.players ?? []).filter((player) => player.inHand && !player.folded);
+}
+
+function playersWhoCanAct(state: RomulusHandState) {
+  return activeGameplayPlayers(state).filter((player) => !player.allIn);
+}
+
+function ensureGameplayState(state: RomulusHandState) {
+  state.currentBetCents = state.currentBetCents ?? 0;
+  state.minRaiseCents = state.minRaiseCents ?? state.bigBlindCents ?? 500;
+  state.actedUserIds = state.actedUserIds ?? [];
+  state.streetContribByUserId = state.streetContribByUserId ?? {};
+  state.postedCentsByUserId = state.postedCentsByUserId ?? {};
+  state.players = state.players ?? [];
+  state.gameplayStatus = state.gameplayStatus ?? "betting";
+}
+
+function bettingRoundComplete(state: RomulusHandState): boolean {
+  ensureGameplayState(state);
+  const currentBet = state.currentBetCents ?? 0;
+  const acted = new Set(state.actedUserIds ?? []);
+  return playersWhoCanAct(state).every((player) => {
+    const posted = state.streetContribByUserId?.[player.userId] ?? 0;
+    return acted.has(player.userId) && posted >= currentBet;
+  });
+}
+
+function callAmountFor(state: RomulusHandState, userId: string): number {
+  ensureGameplayState(state);
+  const currentBet = state.currentBetCents ?? 0;
+  const posted = state.streetContribByUserId?.[userId] ?? 0;
+  return Math.max(0, currentBet - posted);
+}
+
+function minRaiseToFor(state: RomulusHandState): number {
+  ensureGameplayState(state);
+  const currentBet = state.currentBetCents ?? 0;
+  const increment = state.minRaiseCents ?? state.bigBlindCents ?? 500;
+  if (currentBet <= 0) return increment;
+  return currentBet + increment;
+}
+
+function maxRaiseToFor(args: {
+  state: RomulusHandState;
+  seat: Seat | null;
+  betting: "no-limit" | "pot-limit" | "fixed-limit";
+}): number {
+  const { state, seat, betting } = args;
+  if (!seat) return 0;
+  ensureGameplayState(state);
+  const posted = state.streetContribByUserId?.[seat.user_id] ?? 0;
+  const call = callAmountFor(state, seat.user_id);
+  const stackCap = posted + seat.stack_cents;
+  const currentBet = state.currentBetCents ?? 0;
+
+  if (betting === "fixed-limit") {
+    return Math.min(stackCap, minRaiseToFor(state));
+  }
+  if (betting === "pot-limit") {
+    const potRaiseTo = currentBet + (state.potCents ?? 0) + call;
+    return Math.min(stackCap, Math.max(potRaiseTo, minRaiseToFor(state)));
+  }
+  return stackCap;
 }
 
 export default function HomePage() {
@@ -373,7 +483,7 @@ export default function HomePage() {
 
   function nextOpenSeat() {
     const taken = new Set(seats.map((seat) => seat.seat_number));
-    for (let i = 1; i <= 9; i++) if (!taken.has(i)) return i;
+    for (let i = 1; i <= MAX_TABLE_SEATS; i++) if (!taken.has(i)) return i;
     return null;
   }
 
@@ -560,13 +670,17 @@ export default function HomePage() {
         return;
       }
 
-      const activeSeats = seats.filter(
-        (seat) => seat.is_active && seat.stack_cents > 0,
+      const activeSeats: Seat[] = orderedSeats(
+        seats.filter((seat) => seat.is_active && seat.stack_cents > 0),
       );
       if (activeSeats.length < 2) {
         setNotice(
           "Need at least two seated players with chips to start a hand.",
         );
+        return;
+      }
+      if (activeSeats.length > MAX_TABLE_SEATS) {
+        setNotice("Romulus is now set to a 6-max table.");
         return;
       }
 
@@ -582,35 +696,116 @@ export default function HomePage() {
       const handNumber = (hands[0]?.hand_number ?? 0) + 1;
       const bombPotCents =
         activeTable.bomb_pot_cents ?? activeTable.default_bomb_pot_cents;
-      const state = createInitialHandState({
+      let state = createInitialHandState({
         handNumber,
         gameId,
         seatedPlayers: activeSeats as SeatForDeal[],
         bombPotCents,
         requireApproval: activeTable.require_result_approval,
       });
+      state.version = 3;
+      state.maxSeats = MAX_TABLE_SEATS;
+      state.smallBlindCents = activeTable.small_blind_cents;
+      state.bigBlindCents = activeTable.big_blind_cents;
+      state.minRaiseCents = activeTable.big_blind_cents;
+      state.currentBetCents = 0;
+      state.actedUserIds = [];
+      state.streetContribByUserId = {};
+      state.gameplayStatus = "betting";
+      state.players = activeSeats.map((seat) => ({
+        userId: seat.user_id,
+        seatNumber: seat.seat_number,
+        name: displayNameForSeat(seat),
+        inHand: true,
+        folded: false,
+        allIn: false,
+      }));
+
+      const dealer =
+        activeSeats.find((seat) => seat.seat_number === activeTable.button_seat) ??
+        activeSeats[0];
+      state.dealerSeat = dealer.seat_number;
+
+      const stackUpdates: Array<{ userId: string; amountCents: number }> = [];
 
       if (game.isBombPotDefault) {
         for (const seat of activeSeats) {
-          const { error: stackError } = await supabase
-            .from("table_seats")
-            .update({
-              stack_cents: Math.max(0, seat.stack_cents - bombPotCents),
-            })
-            .eq("table_id", activeTableId)
-            .eq("user_id", seat.user_id);
-          if (stackError) {
-            setNotice(
-              `Could not post bomb pot for seat ${seat.seat_number}: ${stackError.message}`,
-            );
-            return;
-          }
+          const posted = Math.min(seat.stack_cents, bombPotCents);
+          state.postedCentsByUserId[seat.user_id] = posted;
+          state.streetContribByUserId[seat.user_id] = 0;
+          stackUpdates.push({ userId: seat.user_id, amountCents: posted });
+          const player = state.players!.find((item) => item.userId === seat.user_id);
+          if (player && seat.stack_cents - posted <= 0) player.allIn = true;
+        }
+        // Bomb-pot community-card games start with the flop already dealt.
+        if (game.family !== "stud") {
+          state = advanceCommunityStreet(state);
+        }
+        state.currentBetCents = 0;
+        state.minRaiseCents = activeTable.big_blind_cents;
+        state.actedUserIds = [];
+        state.streetContribByUserId = {};
+        state.actingUserId = firstPostflopActor(state);
+      } else {
+        const smallBlindSeat = nextOccupiedSeat(activeSeats, dealer.seat_number) ?? activeSeats[0];
+        const bigBlindSeat =
+          nextOccupiedSeat(activeSeats, smallBlindSeat.seat_number) ?? smallBlindSeat;
+        const sb = Math.min(smallBlindSeat.stack_cents, activeTable.small_blind_cents);
+        const bb = Math.min(bigBlindSeat.stack_cents, activeTable.big_blind_cents);
+        state.potCents += sb + bb;
+        state.postedCentsByUserId[smallBlindSeat.user_id] =
+          (state.postedCentsByUserId[smallBlindSeat.user_id] ?? 0) + sb;
+        state.postedCentsByUserId[bigBlindSeat.user_id] =
+          (state.postedCentsByUserId[bigBlindSeat.user_id] ?? 0) + bb;
+        state.streetContribByUserId[smallBlindSeat.user_id] = sb;
+        state.streetContribByUserId[bigBlindSeat.user_id] = bb;
+        state.currentBetCents = bb;
+        state.minRaiseCents = activeTable.big_blind_cents;
+        stackUpdates.push({ userId: smallBlindSeat.user_id, amountCents: sb });
+        stackUpdates.push({ userId: bigBlindSeat.user_id, amountCents: bb });
+        const sbPlayer = state.players!.find((item) => item.userId === smallBlindSeat.user_id);
+        const bbPlayer = state.players!.find((item) => item.userId === bigBlindSeat.user_id);
+        if (sbPlayer && smallBlindSeat.stack_cents - sb <= 0) sbPlayer.allIn = true;
+        if (bbPlayer && bigBlindSeat.stack_cents - bb <= 0) bbPlayer.allIn = true;
+        state.messages.push(
+          `${displayNameForSeat(smallBlindSeat)} posted small blind ${centsToDollars(sb)}.`,
+        );
+        state.messages.push(
+          `${displayNameForSeat(bigBlindSeat)} posted big blind ${centsToDollars(bb)}.`,
+        );
+        const preflopStart =
+          activeSeats.length === 2
+            ? smallBlindSeat
+            : nextOccupiedSeat(activeSeats, bigBlindSeat.seat_number);
+        state.actingUserId = preflopStart?.user_id ?? null;
+      }
+
+      if (!state.actingUserId) {
+        state.gameplayStatus = "showdown";
+        state.street = "showdown";
+        state.messages.push("Everyone is all-in. Runout complete or ready for showdown.");
+      } else {
+        const actor = state.players!.find((player) => player.userId === state.actingUserId);
+        state.messages.push(`Action is on ${actor?.name ?? "next player"}.`);
+      }
+      state.lastActionAt = new Date().toISOString();
+
+      for (const update of stackUpdates) {
+        const seat = activeSeats.find((item) => item.user_id === update.userId);
+        if (!seat || update.amountCents <= 0) continue;
+        const { error: stackError } = await supabase
+          .from("table_seats")
+          .update({
+            stack_cents: Math.max(0, seat.stack_cents - update.amountCents),
+          })
+          .eq("table_id", activeTableId)
+          .eq("user_id", update.userId);
+        if (stackError) {
+          setNotice(`Could not post forced bet: ${stackError.message}`);
+          return;
         }
       }
 
-      const dealer =
-        seats.find((seat) => seat.seat_number === activeTable.button_seat) ??
-        activeSeats[0];
       const { error } = await supabase.from("hands").insert({
         table_id: activeTableId,
         hand_number: handNumber,
@@ -653,9 +848,192 @@ export default function HomePage() {
     if (error) setNotice(error.message);
   }
 
+  function finishBettingRound(state: RomulusHandState): RomulusHandState {
+    ensureGameplayState(state);
+    const game = findGame(state.gameId);
+
+    if (state.street === "river") {
+      state.street = "showdown";
+      state.gameplayStatus = "showdown";
+      state.actingUserId = null;
+      state.messages.push("Betting is complete. Showdown.");
+      return state;
+    }
+
+    if (state.street === "showdown" || state.street === "complete") {
+      state.actingUserId = null;
+      return state;
+    }
+
+    const next = advanceCommunityStreet(state);
+    ensureGameplayState(next);
+    next.currentBetCents = 0;
+    next.minRaiseCents = state.bigBlindCents ?? activeTable?.big_blind_cents ?? 500;
+    next.streetContribByUserId = {};
+    next.actedUserIds = [];
+    next.gameplayStatus = "betting";
+
+    if (game.family === "stud") {
+      next.actingUserId = firstPostflopActor(next);
+    } else {
+      next.actingUserId = firstPostflopActor(next);
+    }
+
+    if (!next.actingUserId) {
+      next.street = "showdown";
+      next.gameplayStatus = "showdown";
+      next.messages.push("Everyone is all-in. Showdown.");
+    } else {
+      const actor = next.players?.find((player) => player.userId === next.actingUserId);
+      next.messages.push(`Action is on ${actor?.name ?? "next player"}.`);
+    }
+    return next;
+  }
+
+  async function resolveAndSaveGameplayState(state: RomulusHandState) {
+    ensureGameplayState(state);
+    const remaining = activeGameplayPlayers(state);
+    const canAct = playersWhoCanAct(state);
+
+    if (remaining.length === 1) {
+      const winner = remaining[0];
+      const seat = seats.find((item) => item.user_id === winner.userId);
+      const pot = state.potCents;
+      state.potCents = 0;
+      state.street = "complete";
+      state.gameplayStatus = "complete";
+      state.actingUserId = null;
+      state.messages.push(`${winner.name} wins ${centsToDollars(pot)} uncontested.`);
+      if (seat && pot > 0 && activeTableId) {
+        await supabase
+          .from("table_seats")
+          .update({ stack_cents: seat.stack_cents + pot })
+          .eq("table_id", activeTableId)
+          .eq("user_id", winner.userId);
+      }
+      await updateActiveHand(state, activeTable?.require_result_approval ? "pending" : "approved");
+      return;
+    }
+
+    if (canAct.length <= 1 || bettingRoundComplete(state)) {
+      state = finishBettingRound(state);
+    } else {
+      const currentActor = state.players?.find((player) => player.userId === state.actingUserId);
+      state.actingUserId = nextActingPlayer(state, currentActor?.seatNumber ?? state.dealerSeat ?? 1);
+      const actor = state.players?.find((player) => player.userId === state.actingUserId);
+      if (actor) state.messages.push(`Action is on ${actor.name}.`);
+    }
+
+    state.lastActionAt = new Date().toISOString();
+    await updateActiveHand(state);
+    if (activeTableId) await refreshTable(activeTableId);
+  }
+
+  async function performAction(
+    action: "fold" | "check-call" | "raise",
+    raiseToCents?: number,
+  ) {
+    if (!profile || !activeTableId || !activeTable || !activeHand) return;
+    if (activeTable.paused) {
+      setNotice("The table is paused.");
+      return;
+    }
+    const state = deepCopyHandState(activeHand.summary);
+    ensureGameplayState(state);
+
+    if (state.gameplayStatus !== "betting" || state.actingUserId !== profile.id) {
+      setNotice("It is not your turn yet.");
+      return;
+    }
+
+    const seat = seats.find((item) => item.user_id === profile.id);
+    const player = state.players?.find((item) => item.userId === profile.id);
+    if (!seat || !player || player.folded || player.allIn) return;
+
+    if (action === "fold") {
+      player.folded = true;
+      player.inHand = false;
+      state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), profile.id])];
+      state.messages.push(`${player.name} folded.`);
+      await resolveAndSaveGameplayState(state);
+      return;
+    }
+
+    const posted = state.streetContribByUserId?.[profile.id] ?? 0;
+    const currentBet = state.currentBetCents ?? 0;
+    const callCents = Math.min(seat.stack_cents, Math.max(0, currentBet - posted));
+
+    let targetStreetContribution = posted + callCents;
+    let isRaise = false;
+
+    if (action === "raise") {
+      const game = findGame(state.gameId);
+      const minTo = minRaiseToFor(state);
+      const maxTo = maxRaiseToFor({ state, seat, betting: game.betting });
+      targetStreetContribution = Math.min(
+        maxTo,
+        Math.max(minTo, raiseToCents ?? minTo),
+      );
+      if (targetStreetContribution <= currentBet) {
+        targetStreetContribution = posted + callCents;
+      } else {
+        isRaise = true;
+      }
+    }
+
+    const amountToPutIn = Math.min(
+      seat.stack_cents,
+      Math.max(0, targetStreetContribution - posted),
+    );
+
+    if (amountToPutIn > 0) {
+      const { error } = await supabase
+        .from("table_seats")
+        .update({ stack_cents: Math.max(0, seat.stack_cents - amountToPutIn) })
+        .eq("table_id", activeTableId)
+        .eq("user_id", profile.id);
+      if (error) {
+        setNotice(error.message);
+        return;
+      }
+    }
+
+    state.potCents += amountToPutIn;
+    state.postedCentsByUserId[profile.id] =
+      (state.postedCentsByUserId[profile.id] ?? 0) + amountToPutIn;
+    state.streetContribByUserId![profile.id] = posted + amountToPutIn;
+
+    if (seat.stack_cents - amountToPutIn <= 0) {
+      player.allIn = true;
+      state.messages.push(`${player.name} is all-in.`);
+    }
+
+    if (isRaise) {
+      const oldBet = state.currentBetCents ?? 0;
+      state.currentBetCents = state.streetContribByUserId![profile.id];
+      state.minRaiseCents = Math.max(
+        state.bigBlindCents ?? activeTable.big_blind_cents,
+        state.currentBetCents - oldBet,
+      );
+      state.actedUserIds = [profile.id];
+      state.messages.push(`${player.name} raised to ${centsToDollars(state.currentBetCents)}.`);
+    } else {
+      state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), profile.id])];
+      if (callCents > 0) {
+        state.messages.push(`${player.name} called ${centsToDollars(callCents)}.`);
+      } else {
+        state.messages.push(`${player.name} checked.`);
+      }
+    }
+
+    await resolveAndSaveGameplayState(state);
+  }
+
   async function advanceStreet() {
     if (!activeHand) return;
-    await updateActiveHand(advanceCommunityStreet(activeHand.summary));
+    const state = deepCopyHandState(activeHand.summary);
+    const next = finishBettingRound(state);
+    await updateActiveHand(next);
   }
 
   async function addManualBet() {
@@ -760,6 +1138,60 @@ export default function HomePage() {
       ),
     );
   }, [activeTable?.action_deadline, clockTick]);
+
+
+  const gameplayControls = useMemo(() => {
+    if (!activeHand || !profile || !mySeat) {
+      return {
+        isMyTurn: false,
+        actingName: "",
+        canCheck: false,
+        callCents: 0,
+        minRaiseToCents: 0,
+        maxRaiseToCents: 0,
+        canRaise: false,
+      };
+    }
+    const state = activeHand.summary;
+    ensureGameplayState(state);
+    const actor = state.players?.find((player) => player.userId === state.actingUserId);
+    const callCents = callAmountFor(state, profile.id);
+    const minRaiseToCents = minRaiseToFor(state);
+    const maxRaiseToCents = maxRaiseToFor({
+      state,
+      seat: mySeat,
+      betting: selectedGame.betting,
+    });
+    return {
+      isMyTurn:
+        state.gameplayStatus === "betting" &&
+        state.actingUserId === profile.id &&
+        !activeTable?.paused,
+      actingName: actor?.name ?? "",
+      canCheck: callCents === 0,
+      callCents,
+      minRaiseToCents,
+      maxRaiseToCents,
+      canRaise: maxRaiseToCents >= minRaiseToCents && mySeat.stack_cents > callCents,
+    };
+  }, [activeHand, profile?.id, mySeat?.stack_cents, selectedGame.betting, activeTable?.paused]);
+
+  useEffect(() => {
+    if (!gameplayControls.canRaise) return;
+    const current = dollarsToCents(manualBetDollars);
+    if (
+      current < gameplayControls.minRaiseToCents ||
+      current > gameplayControls.maxRaiseToCents
+    ) {
+      setManualBetDollars(String(Math.round(gameplayControls.minRaiseToCents / 100)));
+    }
+  }, [
+    gameplayControls.canRaise,
+    gameplayControls.minRaiseToCents,
+    gameplayControls.maxRaiseToCents,
+    activeHand?.id,
+    activeHand?.summary.actingUserId,
+  ]);
 
   const settlementRows = useMemo(() => {
     const byUser = new Map<
@@ -1179,12 +1611,15 @@ export default function HomePage() {
               deckMode={deckMode}
               manualBetDollars={manualBetDollars}
               setManualBetDollars={setManualBetDollars}
+              gameplayControls={gameplayControls}
               onAdvanceStreet={advanceStreet}
               onStartClock={startClock}
               onPauseToggle={() =>
                 updateTablePatch({ paused: !activeTable?.paused })
               }
-              onFold={() => markShowdown("muck")}
+              onFold={() => performAction("fold")}
+              onCallOrCheck={() => performAction("check-call")}
+              onRaise={(raiseToCents) => performAction("raise", raiseToCents)}
               onShow={() => markShowdown("show")}
               onMuck={() => markShowdown("muck")}
               onPostChips={addManualBet}
@@ -1258,15 +1693,12 @@ export default function HomePage() {
 }
 
 const SEAT_POSITIONS = [
-  { x: 50, y: 92, label: "You" },
-  { x: 76, y: 78, label: "Lower right" },
-  { x: 91, y: 57, label: "Right" },
-  { x: 82, y: 32, label: "Upper right" },
-  { x: 62, y: 17, label: "Top right" },
-  { x: 38, y: 17, label: "Top left" },
-  { x: 18, y: 32, label: "Upper left" },
-  { x: 9, y: 57, label: "Left" },
-  { x: 24, y: 78, label: "Lower left" },
+  { x: 50, y: 88, label: "You" },
+  { x: 83, y: 68, label: "Lower right" },
+  { x: 78, y: 28, label: "Upper right" },
+  { x: 50, y: 14, label: "Across" },
+  { x: 22, y: 28, label: "Upper left" },
+  { x: 17, y: 68, label: "Lower left" },
 ];
 
 type DeckMode = "standard" | "four-color";
@@ -1285,10 +1717,21 @@ type PokerRoomProps = {
   deckMode: DeckMode;
   manualBetDollars: string;
   setManualBetDollars: (value: string) => void;
+  gameplayControls: {
+    isMyTurn: boolean;
+    actingName: string;
+    canCheck: boolean;
+    callCents: number;
+    minRaiseToCents: number;
+    maxRaiseToCents: number;
+    canRaise: boolean;
+  };
   onAdvanceStreet: () => void;
   onStartClock: () => void;
   onPauseToggle: () => void;
   onFold: () => void;
+  onCallOrCheck: () => void;
+  onRaise: (raiseToCents: number) => void;
   onShow: () => void;
   onMuck: () => void;
   onPostChips: () => void;
@@ -1310,10 +1753,13 @@ function PokerRoom({
   deckMode,
   manualBetDollars,
   setManualBetDollars,
+  gameplayControls,
   onAdvanceStreet,
   onStartClock,
   onPauseToggle,
   onFold,
+  onCallOrCheck,
+  onRaise,
   onShow,
   onMuck,
   onPostChips,
@@ -1336,16 +1782,61 @@ function PokerRoom({
       ),
     ),
   );
+  const raiseTargetCents = Math.min(
+    gameplayControls.maxRaiseToCents || 0,
+    Math.max(
+      gameplayControls.minRaiseToCents || 0,
+      dollarsToCents(manualBetDollars || "0"),
+    ),
+  );
+  const raiseTargetDollars = centsToDollars(raiseTargetCents);
   const tableClass = `poker-room room-${roomTheme} felt-${feltTheme}`;
+  const pointerStart = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTapTime = useRef(0);
+
+  function handleGestureStart(event: PointerEvent<HTMLElement>) {
+    pointerStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+    };
+  }
+
+  function handleGestureEnd(event: PointerEvent<HTMLElement>) {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start || !activeHand) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+      if (gameplayControls.isMyTurn) onFold();
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTapTime.current < 320) {
+      if (gameplayControls.isMyTurn && gameplayControls.canCheck) {
+        onCallOrCheck();
+      }
+      lastTapTime.current = 0;
+      return;
+    }
+    lastTapTime.current = now;
+  }
+
+  function handleScreenDoubleClick() {
+    if (gameplayControls.isMyTurn && gameplayControls.canCheck) {
+      onCallOrCheck();
+    }
+  }
 
   function positionFor(seatNumber: number) {
     const baseSeat = mySeat?.seat_number ?? 1;
-    const offset = (seatNumber - baseSeat + 9) % 9;
+    const offset = (seatNumber - baseSeat + MAX_TABLE_SEATS) % MAX_TABLE_SEATS;
     return SEAT_POSITIONS[offset] ?? SEAT_POSITIONS[0];
   }
 
   return (
-    <div className={tableClass}>
+    <div className={tableClass} onDoubleClick={handleScreenDoubleClick}>
       <div className="room-topbar">
         <div>
           <div className="room-title">
@@ -1353,6 +1844,7 @@ function PokerRoom({
           </div>
           <div className="room-subtitle">
             {selectedGameName} · Pot {potDollars}
+            {gameplayControls.actingName ? ` · Action: ${gameplayControls.actingName}` : ""}
           </div>
         </div>
         <div className="row room-actions">
@@ -1416,7 +1908,7 @@ function PokerRoom({
           </div>
         </div>
 
-        {Array.from({ length: 9 }, (_, index) => {
+        {Array.from({ length: MAX_TABLE_SEATS }, (_, index) => {
           const seatNumber = index + 1;
           const seat = seats.find(
             (candidate) => candidate.seat_number === seatNumber,
@@ -1440,9 +1932,10 @@ function PokerRoom({
           );
           const currentBet =
             activeHand?.summary.postedCentsByUserId?.[seat?.user_id ?? ""] ?? 0;
+          const isActing = Boolean(seat && activeHand?.summary.actingUserId === seat.user_id);
           return (
             <div
-              className={`table-seat-pod ${isMe ? "is-me" : ""} ${!seat ? "is-empty" : ""}`}
+              className={`table-seat-pod ${isMe ? "is-me" : ""} ${isActing ? "is-acting" : ""} ${!seat ? "is-empty" : ""}`}
               key={seatNumber}
               style={{ left: `${position.x}%`, top: `${position.y}%` }}
               title={position.label}
@@ -1528,17 +2021,23 @@ function PokerRoom({
         })}
       </div>
 
-      <div className="hero-action-tray">
-        <div className="my-hand-panel">
+      <div className="hero-action-tray iphone-action-tray">
+        <div
+          className="my-hand-panel gesture-zone"
+          onPointerDown={handleGestureStart}
+          onPointerUp={handleGestureEnd}
+        >
           <div>
-            <small className="muted">Your hand</small>
+            <small className="muted">
+              Your hand · swipe cards away to fold · double tap to check
+            </small>
             {myHoleCards.length ? (
               <CardRow cards={myHoleCards} deckMode={deckMode} hero />
             ) : (
               <div className="muted">No private cards yet.</div>
             )}
           </div>
-          <div className="hand-tools">
+          <div className="hand-tools compact-hand-tools">
             <button
               className="secondary"
               onClick={onShow}
@@ -1556,76 +2055,86 @@ function PokerRoom({
           </div>
         </div>
 
-        <div className="action-buttons">
-          <button
-            className="danger action-main"
-            onClick={onFold}
-            disabled={!activeHand}
-          >
-            Fold
-          </button>
-          <button
-            className="action-main"
-            onClick={onPostChips}
-            disabled={!activeHand}
-          >
-            Call / Post
-          </button>
-          <button
-            className="secondary action-main"
-            onClick={() => setManualBetDollars(potAmountForButton)}
-            disabled={!activeHand}
-          >
-            Pot
-          </button>
-          <button
-            className="action-main"
-            onClick={onPostChips}
-            disabled={!activeHand}
-          >
-            Raise
-          </button>
-        </div>
-
-        <div className="bet-slider-shell">
-          <label>
-            Bet / raise amount
+        <div className="turn-action-panel">
+          <div className={`turn-banner ${gameplayControls.isMyTurn ? "your-turn" : ""}`}>
+            {gameplayControls.isMyTurn
+              ? "Your action"
+              : gameplayControls.actingName
+                ? `Waiting on ${gameplayControls.actingName}`
+                : activeHand
+                  ? "Hand running"
+                  : "Start a hand"}
+          </div>
+          <div className="two-button-actions">
+            <button
+              className="action-main call-button"
+              onClick={onCallOrCheck}
+              disabled={!gameplayControls.isMyTurn}
+            >
+              {gameplayControls.canCheck
+                ? "Check"
+                : `Call ${centsToDollars(gameplayControls.callCents)}`}
+            </button>
+            <button
+              className="action-main raise-button"
+              onClick={() => onRaise(raiseTargetCents)}
+              disabled={!gameplayControls.isMyTurn || !gameplayControls.canRaise}
+            >
+              Raise to {raiseTargetDollars}
+            </button>
+          </div>
+          <div className="raise-slider-box">
+            <div className="slider-label-row">
+              <span>Min {centsToDollars(gameplayControls.minRaiseToCents)}</span>
+              <span>Max {centsToDollars(gameplayControls.maxRaiseToCents)}</span>
+            </div>
             <input
-              value={manualBetDollars}
-              onChange={(event) => setManualBetDollars(event.target.value)}
-            />
-          </label>
-          <div className="quick-bets">
-            <button
-              className="mini secondary"
-              onClick={() =>
-                setManualBetDollars(
-                  String(
-                    Math.round((activeTable?.big_blind_cents ?? 500) / 100),
-                  ),
-                )
+              type="range"
+              min={gameplayControls.minRaiseToCents || 0}
+              max={Math.max(
+                gameplayControls.minRaiseToCents || 0,
+                gameplayControls.maxRaiseToCents || 0,
+              )}
+              step={100}
+              value={raiseTargetCents || 0}
+              onChange={(event) =>
+                setManualBetDollars(String(Math.round(Number(event.target.value) / 100)))
               }
-            >
-              BB
-            </button>
-            <button
-              className="mini secondary"
-              onClick={() => setManualBetDollars(potAmountForButton)}
-            >
-              Pot
-            </button>
-            <button
-              className="mini secondary"
-              onClick={onAdvanceStreet}
-              disabled={!activeHand || activeHand.summary.street === "complete"}
-            >
-              Deal
-            </button>
-            {profile?.is_admin && activeTable?.require_result_approval && (
-              <button className="mini" onClick={onApproveResult}>
-                Approve
+              disabled={!gameplayControls.canRaise}
+            />
+            <div className="quick-bets portrait-quick-bets">
+              <button
+                className="mini secondary"
+                onClick={() => setManualBetDollars(String(Math.round((activeTable?.big_blind_cents ?? 500) / 100)))}
+              >
+                BB
               </button>
-            )}
+              <button
+                className="mini secondary"
+                onClick={() => setManualBetDollars(potAmountForButton)}
+              >
+                Pot
+              </button>
+              <button
+                className="mini danger ghost-fold"
+                onClick={onFold}
+                disabled={!gameplayControls.isMyTurn}
+              >
+                Fold
+              </button>
+              <button
+                className="mini secondary"
+                onClick={onAdvanceStreet}
+                disabled={!activeHand || activeHand.summary.street === "complete"}
+              >
+                Deal
+              </button>
+              {profile?.is_admin && activeTable?.require_result_approval && (
+                <button className="mini" onClick={onApproveResult}>
+                  Approve
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

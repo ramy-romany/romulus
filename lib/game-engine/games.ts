@@ -2,7 +2,7 @@ import type { GameDefinition } from './types';
 
 export const GAME_CATALOG: GameDefinition[] = [
   {
-    id: 'nlh', displayName: 'No-Limit Hold’em', family: 'holdem', betting: 'no-limit', holeCards: 2, maxPlayers: 9,
+    id: 'nlh', displayName: 'No-Limit Hold’em', family: 'holdem', betting: 'no-limit', holeCards: 2, maxPlayers: 6,
     burnCards: 'skip-if-needed', isBombPotDefault: false, board: { count: 1 }, summary: 'Classic NLH with blinds.'
   },
   ...[4,5,6].map(n => ({
@@ -31,11 +31,11 @@ export const GAME_CATALOG: GameDefinition[] = [
     summary: `Triple-board bomb pot; lowest river board by rank/suit disappears; best high and low across remaining boards split.`
   })),
   {
-    id: 'stud-7', displayName: '7-Card Stud', family: 'stud', betting: 'fixed-limit', holeCards: 7, maxPlayers: 7,
+    id: 'stud-7', displayName: '7-Card Stud', family: 'stud', betting: 'fixed-limit', holeCards: 7, maxPlayers: 6,
     burnCards: 'skip-if-needed', isBombPotDefault: false, summary: 'Fixed-limit 7-card stud.'
   },
   {
-    id: 'stud-minnesota', displayName: 'Stud Minnesota', family: 'stud', betting: 'fixed-limit', holeCards: 7, maxPlayers: 7,
+    id: 'stud-minnesota', displayName: 'Stud Minnesota', family: 'stud', betting: 'fixed-limit', holeCards: 7, maxPlayers: 6,
     burnCards: 'skip-if-needed', isBombPotDefault: true,
     customRules: [
       'Deal 4 cards to each player instead of 3.',

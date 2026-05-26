@@ -9,8 +9,17 @@ export type BoardState = {
   removedReason?: string;
 };
 
+export type GameplayPlayerState = {
+  userId: string;
+  seatNumber: number;
+  name: string;
+  inHand: boolean;
+  folded: boolean;
+  allIn: boolean;
+};
+
 export type RomulusHandState = {
-  version: 2;
+  version: 2 | 3;
   handNumber: number;
   gameId: string;
   gameName: string;
@@ -26,6 +35,21 @@ export type RomulusHandState = {
   messages: string[];
   requireApproval: boolean;
   approved?: boolean;
+
+  // v0.3 gameplay fields. These are intentionally inside the hand summary so
+  // the static PWA can test real-time play through Supabase without a new schema.
+  maxSeats?: 6;
+  dealerSeat?: number;
+  smallBlindCents?: number;
+  bigBlindCents?: number;
+  currentBetCents?: number;
+  minRaiseCents?: number;
+  actingUserId?: string | null;
+  actedUserIds?: string[];
+  streetContribByUserId?: Record<string, number>;
+  players?: GameplayPlayerState[];
+  gameplayStatus?: 'betting' | 'showdown' | 'complete';
+  lastActionAt?: string;
 };
 
 export type SeatForDeal = {

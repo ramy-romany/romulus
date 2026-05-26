@@ -152,3 +152,104 @@ button.mini { padding:5px 8px; border-radius:9px; font-size:11px; }
   .hero-action-tray { grid-template-columns: 1fr; position: sticky; bottom: 8px; }
   .action-buttons { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
+
+/* Romulus v0.3: 6-max iPhone-first gameplay pass */
+.table-seat-pod.is-acting {
+  border-color: rgba(125, 211, 252, .95);
+  box-shadow: 0 0 0 2px rgba(125,211,252,.18), 0 0 24px rgba(125,211,252,.22), 0 18px 40px rgba(0,0,0,.48);
+}
+.turn-action-panel { display:grid; gap:9px; }
+.turn-banner {
+  text-align:center;
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:rgba(244,241,232,.68);
+  padding:7px 10px;
+  border-radius:999px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.11);
+}
+.turn-banner.your-turn {
+  color:#08120d;
+  background:#e8c66d;
+  border-color:rgba(255,255,255,.2);
+}
+.two-button-actions { display:grid; grid-template-columns: 1fr 1fr; gap:9px; }
+.call-button { background:#f4f1e8; }
+.raise-button { background:#e8c66d; }
+.raise-slider-box { display:grid; gap:6px; }
+.slider-label-row { display:flex; justify-content:space-between; color:rgba(244,241,232,.62); font-size:11px; }
+input[type="range"] { padding:0; accent-color:#e8c66d; height:34px; }
+.gesture-zone { touch-action: pan-y; user-select:none; }
+.ghost-fold { opacity:.82; }
+.compact-hand-tools button { padding:7px 9px; font-size:12px; }
+.portrait-quick-bets { justify-content:center; }
+.iphone-action-tray { grid-template-columns: minmax(245px, .95fr) minmax(300px, 1fr); }
+@media (max-width: 1200px) {
+  .table-grid > section.grid { order: 1; }
+  .table-grid > aside:first-child { order: 2; }
+  .table-grid > aside:last-child { order: 3; }
+}
+@media (max-width: 760px) {
+  body { background:#050708; }
+  main { padding:0; }
+  .hero { padding:10px 12px; margin-bottom:0; align-items:center; }
+  .logo { font-size:34px; }
+  .status { margin:8px 10px; }
+  .table-grid { gap:0; }
+  .table-grid > aside { padding:10px; }
+  .poker-room {
+    min-height: 100svh;
+    border-radius:0;
+    border-left:0;
+    border-right:0;
+    padding:10px;
+  }
+  .room-topbar { align-items:center; }
+  .room-title { font-size:16px; }
+  .room-subtitle { font-size:11px; }
+  .room-actions button { padding:7px 9px; font-size:12px; }
+  .clock-chip { min-width:38px; padding:6px 8px; }
+  .poker-stage { min-height: calc(100svh - 265px); margin-top:6px; }
+  .poker-table-surface { width: 104%; height: 45%; top: 45%; }
+  .pot-stack { top:18%; min-width:112px; padding:6px 10px; }
+  .pot-stack strong { font-size:15px; }
+  .community-zone { gap:5px; margin-top:20px; }
+  .felt-board { padding:5px 7px; }
+  .table-logo { bottom:9%; font-size:18px; }
+  .table-seat-pod {
+    width: 104px;
+    min-height: 70px;
+    gap:1px;
+    padding:6px 4px;
+    border-radius:13px;
+  }
+  .table-seat-pod.is-me { width: 124px; transform:translate(-50%, -54%); }
+  .avatar-ring { width:28px; height:28px; margin-top:-16px; font-size:12px; }
+  .seat-name { max-width:82px; font-size:11px; }
+  .seat-stack, .seat-bet { font-size:10px; }
+  .dealer-button { width:24px; height:24px; font-size:12px; }
+  .card-face { min-width: 26px; height: 36px; font-size: 11px; margin:1px; border-radius:6px; }
+  .hero-card-row .card-face.hero-card { min-width:42px; height:58px; font-size:16px; }
+  .hero-action-tray.iphone-action-tray {
+    grid-template-columns: 1fr;
+    position: sticky;
+    bottom: 0;
+    margin-left:-2px;
+    margin-right:-2px;
+    padding:9px;
+    border-radius:18px 18px 0 0;
+    gap:8px;
+    background:rgba(0,0,0,.68);
+    backdrop-filter: blur(14px);
+  }
+  .my-hand-panel { align-items:end; }
+  .hand-tools { flex-direction:column; }
+  .two-button-actions { grid-template-columns: 1fr 1fr; }
+  .action-main { min-height:56px; padding:10px 8px; font-size:16px; border-radius:15px; }
+  .raise-slider-box { padding:0 4px; }
+  .hand-log-strip { padding:0 4px 8px; font-size:11px; }
+  .message-list { max-height:220px; }
+}
