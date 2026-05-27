@@ -220,6 +220,7 @@ export default function HomePage() {
   const [autoStartNextHand, setAutoStartNextHand] = useState(true);
   const [winnerAnnouncement, setWinnerAnnouncement] = useState<WinnerAnnouncement | null>(null);
   const [showPublicSettlementTool, setShowPublicSettlementTool] = useState(false);
+  const [showAccountPanel, setShowAccountPanel] = useState(false);
   const [publicSettlementRows, setPublicSettlementRows] = useState<Array<{ id: string; name: string; net: string }>>([
     { id: "p1", name: "Ramy", net: "0" },
     { id: "p2", name: "Player 2", net: "0" },
@@ -1746,6 +1747,9 @@ export default function HomePage() {
           <button className="secondary" onClick={() => setShowPublicSettlementTool((value) => !value)}>
             Optimized payments
           </button>
+          <button className="secondary" onClick={() => setShowAccountPanel((value) => !value)}>
+            Account
+          </button>
           <button className="secondary" onClick={signOut}>
             Sign out
           </button>
@@ -1761,6 +1765,16 @@ export default function HomePage() {
           onAdd={addPublicSettlementRow}
           onRemove={removePublicSettlementRow}
           onReset={resetPublicSettlementTool}
+        />
+      )}
+
+      {showAccountPanel && (
+        <AccountPanel
+          username={profile?.display_name ?? session.user.email ?? "Player"}
+          newPassword={newPassword}
+          passwordNotice={passwordNotice}
+          onPasswordChange={setNewPassword}
+          onSubmit={changePassword}
         />
       )}
 
@@ -2135,6 +2149,43 @@ export default function HomePage() {
 }
 
 
+function AccountPanel({
+  username,
+  newPassword,
+  passwordNotice,
+  onPasswordChange,
+  onSubmit,
+}: {
+  username: string;
+  newPassword: string;
+  passwordNotice: string;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <section className="card account-panel">
+      <div>
+        <h2>Account</h2>
+        <p className="muted">Signed in as {username}. Change your password here.</p>
+      </div>
+      <label>
+        New password
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={newPassword}
+          onChange={(event) => onPasswordChange(event.target.value)}
+          placeholder="At least 8 characters"
+        />
+      </label>
+      <button onClick={onSubmit} disabled={newPassword.trim().length < 8}>
+        Change Password
+      </button>
+      {passwordNotice && <p className="muted">{passwordNotice}</p>}
+    </section>
+  );
+}
+
 function PublicSettlementTool({
   rows,
   payments,
@@ -2314,7 +2365,8 @@ function PokerRoom({
     ),
   );
   const raiseTargetDollars = centsToDollars(raiseTargetCents);
-  const tableClass = `poker-room room-${roomTheme} felt-${feltTheme}`;
+  const boardCount = activeHand?.summary.boards.length ?? 0;
+  const tableClass = `poker-room room-${roomTheme} felt-${feltTheme} boards-${boardCount} ${boardCount >= 2 ? "multi-board" : "single-board"}`;
   const pointerStart = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTapTime = useRef(0);
 
@@ -2422,13 +2474,9 @@ function PokerRoom({
           <div className="table-rail" />
           <div className="table-felt">
             <div className="table-logo">ROMULUS</div>
-            <div className="pot-stack">
-              <div className="chip-stack">
-                <span />
-                <span />
-                <span />
-              </div>
-              <strong>{potDollars}</strong>
+            <div className="pot-badge">
+              <span className="mini-chip-stack"><i /><i /><i /></span>
+              <strong>Pot {potDollars}</strong>
               <small>
                 {activeHand
                   ? `Hand #${activeHand.hand_number} · ${activeHand.summary.street}`
@@ -2566,7 +2614,7 @@ function PokerRoom({
                   )}
                   {holeCards.length > 0 && !canSeeHole && (
                     <CardBacks
-                      count={Math.min(holeCards.length, 6)}
+                      count={isMe ? Math.min(holeCards.length, 6) : Math.min(holeCards.length, 2)}
                       color={cardBackTheme}
                     />
                   )}
@@ -2614,7 +2662,7 @@ function PokerRoom({
         >
           <div>
             <small className="muted">
-              Your hand · swipe cards left/right to fold · double tap to check
+              Your hand · double tap to check · swipe still works
             </small>
             {myHoleCards.length ? (
               <CardRow cards={myHoleCards} deckMode={deckMode} hero />
@@ -2650,7 +2698,14 @@ function PokerRoom({
                   ? "Hand running"
                   : "Start a hand"}
           </div>
-          <div className="two-button-actions">
+          <div className="three-button-actions">
+            <button
+              className="action-main fold-button"
+              onClick={onFold}
+              disabled={!gameplayControls.isMyTurn}
+            >
+              Fold
+            </button>
             <button
               className="action-main call-button"
               onClick={onCallOrCheck}
@@ -2699,13 +2754,6 @@ function PokerRoom({
                 onClick={() => setManualBetDollars(potAmountForButton)}
               >
                 Pot
-              </button>
-              <button
-                className="mini danger ghost-fold"
-                onClick={onFold}
-                disabled={!gameplayControls.isMyTurn}
-              >
-                Fold
               </button>
               <button
                 className="mini secondary"

@@ -528,3 +528,149 @@ input[type="range"] { padding:0; accent-color:#e8c66d; height:34px; }
   .payment-line { grid-template-columns: 1fr auto; }
   .payment-line strong { display: none; }
 }
+
+/* Romulus v0.3.6 phone/table cleanup pass */
+.account-panel {
+  margin: 0 0 18px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.pot-stack { display: none; }
+.pot-badge {
+  position: absolute;
+  top: 4.5%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.44);
+  border: 1px solid rgba(255,255,255,.15);
+  box-shadow: 0 8px 24px rgba(0,0,0,.28);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pot-badge strong { font-size: 13px; color: #f9df91; }
+.pot-badge small { font-size: 10px; color: rgba(244,241,232,.68); }
+.mini-chip-stack { position: relative; width: 24px; height: 14px; display: inline-block; flex: 0 0 auto; }
+.mini-chip-stack i { position:absolute; left:50%; transform:translateX(-50%); width:20px; height:7px; border-radius:50%; background:#e8c66d; border:1px dashed rgba(0,0,0,.32); }
+.mini-chip-stack i:nth-child(1) { bottom:0; }
+.mini-chip-stack i:nth-child(2) { bottom:4px; background:#f4f1e8; }
+.mini-chip-stack i:nth-child(3) { bottom:8px; background:#fb7185; }
+.community-zone { position: relative; z-index: 4; margin-top: 0; width: 94%; }
+.multi-board .community-zone { gap: 4px; width: 97%; }
+.multi-board .felt-board { padding: 4px 7px; gap: 2px; }
+.multi-board .board-label { font-size: 9px; line-height: 1; }
+.multi-board .felt-board .card-face { min-width: 44px; height: 61px; border-radius: 10px; font-size: 17px; margin: 2px; }
+.table-seat-pod { z-index: 7; }
+.three-button-actions { display: grid; grid-template-columns: .82fr 1fr 1fr; gap: 9px; }
+.fold-button { background: #fb7185; color: #19060a; }
+.hero-card-row > div { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; }
+.hero-card-row .card-face.hero-card { min-width: 58px; height: 82px; border-radius: 13px; font-size: 22px; margin: 2px; }
+
+@media (max-width: 760px) {
+  .hero { padding-top: max(10px, env(safe-area-inset-top)); }
+  .hero .row { gap: 7px; }
+  .hero .row button { padding: 8px 10px; font-size: 12px; }
+  .account-panel { margin: 10px; grid-template-columns: 1fr; }
+  .poker-room {
+    min-height: 100dvh;
+    padding: max(8px, env(safe-area-inset-top)) 7px calc(8px + env(safe-area-inset-bottom));
+  }
+  .room-topbar {
+    gap: 6px;
+  }
+  .room-actions { gap: 6px; }
+  .poker-stage {
+    min-height: calc(100dvh - 292px);
+    margin-top: 2px;
+  }
+  .poker-table-surface {
+    width: 112%;
+    height: 57%;
+    top: 47%;
+  }
+  .table-felt { inset: 8%; }
+  .pot-badge {
+    top: 2.5%;
+    padding: 4px 8px;
+    max-width: 88%;
+    overflow: hidden;
+  }
+  .pot-badge strong { font-size: 12px; }
+  .pot-badge small { font-size: 9px; }
+  .multi-board .community-zone { gap: 2px; width: 98%; transform: translateY(5px); }
+  .multi-board .felt-board { padding: 3px 4px; border-radius: 10px; }
+  .multi-board .board-label { font-size: 8px; }
+  .multi-board .felt-board .card-face {
+    min-width: 36px;
+    height: 50px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin: 1px;
+  }
+  .single-board .felt-board .card-face {
+    min-width: 44px;
+    height: 61px;
+    font-size: 16px;
+  }
+  .table-seat-pod {
+    width: 92px;
+    min-height: 56px;
+    padding: 5px 4px;
+    border-radius: 12px;
+    background: rgba(7,11,12,.78);
+  }
+  .multi-board .table-seat-pod:not(.is-me) {
+    width: 86px;
+    min-height: 50px;
+  }
+  .table-seat-pod.is-me {
+    width: 118px;
+    min-height: 58px;
+  }
+  .table-seat-pod.is-empty {
+    width: 66px;
+    min-height: 28px;
+    padding: 2px 3px;
+    opacity: .26;
+    background: rgba(0,0,0,.08);
+    border-style: dashed;
+    pointer-events: none;
+  }
+  .table-seat-pod.is-empty .empty-seat-dot,
+  .table-seat-pod.is-empty .seat-stack { display: none; }
+  .table-seat-pod.is-empty .seat-name { font-size: 9px; opacity: .8; }
+  .avatar-ring { width: 24px; height: 24px; margin-top: -14px; font-size: 11px; }
+  .seat-name { max-width: 70px; font-size: 10px; }
+  .seat-stack, .seat-bet { font-size: 9px; }
+  .table-seat-pod:not(.is-me) .card-back { width: 15px; height: 21px; }
+  .table-seat-pod:not(.is-me) .card-backs { max-width: 44px; }
+  .hero-action-tray.iphone-action-tray {
+    padding: 8px 8px calc(10px + env(safe-area-inset-bottom));
+    gap: 7px;
+  }
+  .my-hand-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px; }
+  .my-hand-panel small { display:block; font-size: 10px; line-height: 1.25; }
+  .hero-card-row .card-face.hero-card {
+    min-width: 47px;
+    height: 66px;
+    border-radius: 10px;
+    font-size: 18px;
+    margin: 1px;
+  }
+  .hand-tools button { padding: 6px 8px; font-size: 11px; }
+  .turn-banner { padding: 6px 8px; font-size: 11px; }
+  .three-button-actions { grid-template-columns: .78fr 1fr 1fr; gap: 7px; }
+  .action-main { min-height: 50px; padding: 9px 6px; font-size: 15px; border-radius: 14px; }
+  .raise-slider-box { gap: 4px; }
+  input[type="range"] { height: 26px; }
+  .quick-bets { gap: 5px; }
+  button.mini { padding: 5px 7px; font-size: 10px; }
+  .hand-log-strip { display: none; }
+}

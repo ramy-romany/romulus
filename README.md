@@ -85,3 +85,8 @@ Adds winner announcement banners on the table after payouts, including who won, 
 - Reveals all showdown players' hole cards to everyone after a called showdown, so players can see the winning hand and the called losing hand.
 - Adds more winner-banner detail lines, including auto-showdown notes and winning-card summaries.
 - Adds a public optimized-payments tool on the login/main page for live in-person games, usable without logging in.
+
+
+## v0.3.6
+
+Mobile UI cleanup: account/password panel exposed in the top bar, pot badge moved away from community cards, 3-action Fold/Check/Bet controls, compact multi-board layout, smaller hero cards, and smaller empty seats on iPhone.
