@@ -75,6 +75,7 @@ export type RomulusHandState = {
   players?: GameplayPlayerState[];
   gameplayStatus?: 'betting' | 'showdown' | 'complete';
   lastActionAt?: string;
+  actionLabelsByUserId?: Record<string, string>;
   resultApplied?: boolean;
   showdownRevealedUserIds?: string[];
   showdownResult?: {
