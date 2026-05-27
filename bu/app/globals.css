@@ -1,5 +1,0 @@
-:root { color-scheme: dark; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #07140f; color: #f4f1e8; }
-button, input, select { font: inherit; }
-.card { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 16px; }
-.grid { display: grid; gap: 16px; }
