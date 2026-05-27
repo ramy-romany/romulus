@@ -1020,3 +1020,39 @@ button.secondary.danger { border-color: rgba(251,113,133,.48); color: #ffd6dc; b
   .icon-button { min-width: 34px; padding: 0.42rem 0.48rem; font-size: 0.95rem; }
   .table-modal-card { border-radius: 18px; padding: 14px; }
 }
+
+.start-hand-inline {
+  min-width: 112px;
+  font-weight: 900;
+  border-radius: 999px;
+}
+.no-hand-actions {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+.no-hand-actions > button {
+  min-width: 190px;
+  font-weight: 900;
+}
+.mini-game-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: min(520px, 86vw);
+}
+.mini-game-picks button {
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+@media (max-width: 700px) {
+  .room-table-controls {
+    grid-template-columns: 1fr auto;
+  }
+  .start-hand-inline {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}

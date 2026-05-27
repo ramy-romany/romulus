@@ -1062,7 +1062,12 @@ export default function HomePage() {
 
       let gameId = options?.gameIdOverride || table.current_game_id || "nlh";
       const disabledGameIdsForTable = table.disabled_game_ids ?? [];
-      if (disabledGameIdsForTable.includes(gameId)) gameId = "nlh";
+      const playableForSeatCount = GAME_CATALOG.filter(
+        (gameOption) => !disabledGameIdsForTable.includes(gameOption.id) && playableWith(gameOption, activeSeats.length),
+      );
+      if (disabledGameIdsForTable.includes(gameId) || !playableWith(findGame(gameId), activeSeats.length)) {
+        gameId = playableForSeatCount[0]?.id ?? "nlh";
+      }
       if (table.game_selection_mode === "random" && !options?.gameIdOverride) {
         const randomIds = table.random_game_ids?.length
           ? table.random_game_ids
@@ -1079,6 +1084,9 @@ export default function HomePage() {
           .from("tables")
           .update({ current_game_id: gameId })
           .eq("id", activeTableId);
+      }
+      if (table.current_game_id !== gameId) {
+        await supabase.from("tables").update({ current_game_id: gameId }).eq("id", activeTableId);
       }
       const game = findGame(gameId);
       if (!playableWith(game, activeSeats.length)) {
@@ -2811,6 +2819,7 @@ export default function HomePage() {
               onChatOpen={() => setTablePanel("chat")}
               onLogOpen={() => setTablePanel("log")}
               onSettlementOpen={() => setTablePanel("settlement")}
+              onStartHand={() => startHand({ reason: "Starting hand…" })}
               onChooseGameAndStart={chooseGameAndStart}
               winnerAnnouncement={winnerAnnouncement}
             />
@@ -3120,6 +3129,7 @@ type PokerRoomProps = {
   onChatOpen: () => void;
   onLogOpen: () => void;
   onSettlementOpen: () => void;
+  onStartHand: () => void;
   onChooseGameAndStart: (gameId: string) => void;
   winnerAnnouncement: WinnerAnnouncement | null;
 };
@@ -3173,6 +3183,7 @@ function PokerRoom({
   onChatOpen,
   onLogOpen,
   onSettlementOpen,
+  onStartHand,
   onChooseGameAndStart,
   winnerAnnouncement,
 }: PokerRoomProps) {
@@ -3385,6 +3396,9 @@ function PokerRoom({
           <button onClick={onBuyIn} disabled={!mySeat}>Buy In</button>
         </div>
         <button className="secondary lobby-icon-button" onClick={onLobby} aria-label="Lobby" title="Lobby">⌂</button>
+        {!activeHand && (
+          <button className="start-hand-inline" onClick={onStartHand}>Start Hand</button>
+        )}
       </div>
 
       <div className="poker-stage">
@@ -3434,6 +3448,18 @@ function PokerRoom({
                 <div className="no-hand-card">
                   <strong>Choose a game and start a hand</strong>
                   <span>Cards, boards, pot, and action will live here.</span>
+                  <div className="no-hand-actions">
+                    <button onClick={onStartHand}>Start {selectedGameName}</button>
+                    {gameSelectionMode === "dealer-choice" && playableGames.length > 0 && (
+                      <div className="mini-game-picks">
+                        {playableGames.slice(0, 6).map((game) => (
+                          <button key={game.id} className="secondary" onClick={() => onChooseGameAndStart(game.id)}>
+                            {game.displayName}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
