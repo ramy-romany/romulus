@@ -88,6 +88,7 @@ type WinnerAnnouncement = {
   handNumber: number;
   primaryBanner: string;
   banners: NonNullable<NonNullable<RomulusHandState["showdownResult"]>["winnerBanners"]>;
+  details: string[];
 };
 
 const EMPTY_TABLE_NAME = "Friday Night Romulus";
@@ -218,6 +219,13 @@ export default function HomePage() {
   const [passwordNotice, setPasswordNotice] = useState("");
   const [autoStartNextHand, setAutoStartNextHand] = useState(true);
   const [winnerAnnouncement, setWinnerAnnouncement] = useState<WinnerAnnouncement | null>(null);
+  const [showPublicSettlementTool, setShowPublicSettlementTool] = useState(false);
+  const [publicSettlementRows, setPublicSettlementRows] = useState<Array<{ id: string; name: string; net: string }>>([
+    { id: "p1", name: "Ramy", net: "0" },
+    { id: "p2", name: "Player 2", net: "0" },
+    { id: "p3", name: "Player 3", net: "0" },
+    { id: "p4", name: "Player 4", net: "0" },
+  ]);
 
   const autoResolveKeyRef = useRef("");
   const autoNextHandKeyRef = useRef("");
@@ -1067,6 +1075,10 @@ export default function HomePage() {
       }
     }
 
+    workingState.showdownRevealedUserIds = (workingState.players ?? [])
+      .filter((player) => player.inHand && !player.folded)
+      .map((player) => player.userId);
+
     workingState.showdownResult = {
       payoutsByUserId: resolution.payoutsByUserId,
       highWinnerIds: resolution.highWinnerIds,
@@ -1459,7 +1471,10 @@ export default function HomePage() {
   ]);
 
   useEffect(() => {
-    if (!activeHand?.summary.showdownResult?.winnerBanners?.length) return;
+    if (!activeHand?.summary.showdownResult?.winnerBanners?.length) {
+      setWinnerAnnouncement(null);
+      return;
+    }
     const primaryBanner =
       activeHand.summary.showdownResult.primaryBanner ||
       activeHand.summary.showdownResult.messages?.slice(-1)?.[0] ||
@@ -1469,13 +1484,16 @@ export default function HomePage() {
       handNumber: activeHand.hand_number,
       primaryBanner,
       banners: activeHand.summary.showdownResult.winnerBanners,
+      details: (activeHand.summary.showdownResult.messages ?? [])
+        .filter((message) => /winning|auto showdown/i.test(message))
+        .slice(-3),
     };
     setWinnerAnnouncement(nextAnnouncement);
     const timer = window.setTimeout(() => {
       setWinnerAnnouncement((current) =>
         current?.handId === activeHand.id ? null : current,
       );
-    }, 8500);
+    }, 7000);
     return () => window.clearTimeout(timer);
   }, [
     activeHand?.id,
@@ -1553,6 +1571,47 @@ export default function HomePage() {
     [settlementRows],
   );
 
+  const publicOptimizedPayments = useMemo(() => {
+    return optimizeSettlement(
+      publicSettlementRows
+        .map((row) => ({
+          userId: row.id,
+          name: row.name.trim() || "Player",
+          netCents: dollarsToCents(row.net || "0"),
+        }))
+        .filter((row) => row.name && row.netCents !== 0),
+    );
+  }, [publicSettlementRows]);
+
+  function updatePublicSettlementRow(id: string, patch: Partial<{ name: string; net: string }>) {
+    setPublicSettlementRows((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  function addPublicSettlementRow() {
+    setPublicSettlementRows((rows) => [
+      ...rows,
+      { id: `p${Date.now()}`, name: `Player ${rows.length + 1}`, net: "0" },
+    ]);
+  }
+
+  function removePublicSettlementRow(id: string) {
+    setPublicSettlementRows((rows) => rows.length <= 2 ? rows : rows.filter((row) => row.id !== id));
+  }
+
+  function resetPublicSettlementTool() {
+    setPublicSettlementRows([
+      { id: "p1", name: "Ramy", net: "0" },
+      { id: "p2", name: "Player 2", net: "0" },
+      { id: "p3", name: "Player 3", net: "0" },
+      { id: "p4", name: "Player 4", net: "0" },
+    ]);
+  }
+
+  const publicSettlementNetTotal = useMemo(
+    () => publicSettlementRows.reduce((sum, row) => sum + dollarsToCents(row.net || "0"), 0),
+    [publicSettlementRows],
+  );
+
   if (!supabaseReady) {
     return (
       <main>
@@ -1591,6 +1650,26 @@ export default function HomePage() {
             </p>
           </div>
         </div>
+        <section className="card public-tool-callout">
+          <div>
+            <h2>Live-game optimized payments</h2>
+            <p className="muted">Use this without logging in when you play in person. Enter each player's final win/loss and Romulus will reduce it to the fewest payments.</p>
+          </div>
+          <button onClick={() => setShowPublicSettlementTool((value) => !value)}>
+            {showPublicSettlementTool ? "Hide optimized payments" : "Open optimized payments"}
+          </button>
+        </section>
+        {showPublicSettlementTool && (
+          <PublicSettlementTool
+            rows={publicSettlementRows}
+            payments={publicOptimizedPayments}
+            netTotal={publicSettlementNetTotal}
+            onUpdate={updatePublicSettlementRow}
+            onAdd={addPublicSettlementRow}
+            onRemove={removePublicSettlementRow}
+            onReset={resetPublicSettlementTool}
+          />
+        )}
         <section
           className="grid"
           style={{ gridTemplateColumns: "minmax(280px, 420px) 1fr" }}
@@ -1663,10 +1742,27 @@ export default function HomePage() {
             )}
           </div>
         </div>
-        <button className="secondary" onClick={signOut}>
-          Sign out
-        </button>
+        <div className="row">
+          <button className="secondary" onClick={() => setShowPublicSettlementTool((value) => !value)}>
+            Optimized payments
+          </button>
+          <button className="secondary" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
       </div>
+
+      {showPublicSettlementTool && (
+        <PublicSettlementTool
+          rows={publicSettlementRows}
+          payments={publicOptimizedPayments}
+          netTotal={publicSettlementNetTotal}
+          onUpdate={updatePublicSettlementRow}
+          onAdd={addPublicSettlementRow}
+          onRemove={removePublicSettlementRow}
+          onReset={resetPublicSettlementTool}
+        />
+      )}
 
       {notice && (
         <div className="status row">
@@ -2038,6 +2134,84 @@ export default function HomePage() {
   );
 }
 
+
+function PublicSettlementTool({
+  rows,
+  payments,
+  netTotal,
+  onUpdate,
+  onAdd,
+  onRemove,
+  onReset,
+}: {
+  rows: Array<{ id: string; name: string; net: string }>;
+  payments: Array<{ from: string; to: string; amountCents: number }>;
+  netTotal: number;
+  onUpdate: (id: string, patch: Partial<{ name: string; net: string }>) => void;
+  onAdd: () => void;
+  onRemove: (id: string) => void;
+  onReset: () => void;
+}) {
+  return (
+    <section className="card public-settlement-tool">
+      <div className="row public-tool-header">
+        <div>
+          <h2>Optimized payments</h2>
+          <p className="muted">
+            Enter each player’s final net result. Positive means they won; negative means they lost.
+          </p>
+        </div>
+        <div className="row">
+          <button className="secondary" onClick={onAdd}>Add player</button>
+          <button className="secondary" onClick={onReset}>Reset</button>
+        </div>
+      </div>
+      <div className="public-settlement-grid">
+        {rows.map((row) => (
+          <div className="public-settlement-row" key={row.id}>
+            <label>
+              Name
+              <input value={row.name} onChange={(event) => onUpdate(row.id, { name: event.target.value })} />
+            </label>
+            <label>
+              Won / Lost
+              <input
+                inputMode="decimal"
+                value={row.net}
+                onChange={(event) => onUpdate(row.id, { net: event.target.value })}
+                placeholder="250 or -250"
+              />
+            </label>
+            <button className="secondary" onClick={() => onRemove(row.id)} disabled={rows.length <= 2}>
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="settlement-total-check">
+        Net total: <strong>{centsToDollars(netTotal)}</strong>
+        {netTotal !== 0 && <span className="muted"> · should be $0 when all wins/losses are entered.</span>}
+      </div>
+      <hr />
+      <h3>Least transactions</h3>
+      {payments.length ? (
+        <div className="payment-report">
+          {payments.map((payment, index) => (
+            <div className="payment-line" key={`${payment.from}-${payment.to}-${index}`}>
+              <span>{payment.from}</span>
+              <strong>pays</strong>
+              <span>{payment.to}</span>
+              <b>{centsToDollars(payment.amountCents)}</b>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No payments needed yet.</p>
+      )}
+    </section>
+  );
+}
+
 const SEAT_POSITIONS = [
   { x: 50, y: 88, label: "You" },
   { x: 83, y: 68, label: "Lower right" },
@@ -2266,6 +2440,13 @@ function PokerRoom({
               <div className="winner-announcement" aria-live="polite">
                 <div className="winner-kicker">Hand #{winnerAnnouncement.handNumber} result</div>
                 <strong>{winnerAnnouncement.primaryBanner}</strong>
+                {winnerAnnouncement.details.length > 0 && (
+                  <div className="winner-details">
+                    {winnerAnnouncement.details.map((detail) => (
+                      <span key={detail}>{detail}</span>
+                    ))}
+                  </div>
+                )}
                 {winnerAnnouncement.banners.length > 1 && (
                   <div className="winner-splits">
                     {winnerAnnouncement.banners.map((banner) => (
@@ -2322,10 +2503,13 @@ function PokerRoom({
               showdownChoices?: Record<string, string>;
             }
           )?.showdownChoices?.[seat?.user_id ?? ""];
+          const isShowdownRevealed = Boolean(
+            seat && activeHand?.summary.showdownRevealedUserIds?.includes(seat.user_id),
+          );
           const canSeeHole = Boolean(
             seat &&
             profile &&
-            (seat.user_id === profile.id || showdownChoice === "show"),
+            (seat.user_id === profile.id || showdownChoice === "show" || isShowdownRevealed),
           );
           const currentBet =
             activeHand?.summary.postedCentsByUserId?.[seat?.user_id ?? ""] ?? 0;
@@ -2376,7 +2560,7 @@ function PokerRoom({
                   {holeCards.length > 0 && canSeeHole && (
                     <CardRow
                       cards={holeCards}
-                      label={isMe ? undefined : "Shown"}
+                      label={isMe ? undefined : isShowdownRevealed ? "Showdown" : "Shown"}
                       deckMode={deckMode}
                     />
                   )}

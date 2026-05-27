@@ -78,3 +78,10 @@ Still next: side pots, full server-side trusted actions, Stud Minnesota replacem
 ## v0.3.4
 
 Adds winner announcement banners on the table after payouts, including who won, why they won, and the amount paid. Also delays auto-next-hand long enough to see the result and rotates the dealer button automatically for the next hand.
+
+## v0.3.5
+
+- Fixes winner banners clearing when the next hand starts.
+- Reveals all showdown players' hole cards to everyone after a called showdown, so players can see the winning hand and the called losing hand.
+- Adds more winner-banner detail lines, including auto-showdown notes and winning-card summaries.
+- Adds a public optimized-payments tool on the login/main page for live in-person games, usable without logging in.

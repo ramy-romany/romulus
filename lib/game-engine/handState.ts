@@ -51,6 +51,7 @@ export type RomulusHandState = {
   gameplayStatus?: 'betting' | 'showdown' | 'complete';
   lastActionAt?: string;
   resultApplied?: boolean;
+  showdownRevealedUserIds?: string[];
   showdownResult?: {
     payoutsByUserId: Record<string, number>;
     highWinnerIds: string[];
