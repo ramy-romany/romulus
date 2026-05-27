@@ -1107,3 +1107,106 @@ button.secondary.danger { border-color: rgba(251,113,133,.48); color: #ffd6dc; b
 .table-seat-pod.clock-warning .avatar-ring {
   box-shadow: 0 0 14px rgba(251,113,133,.44);
 }
+/* Romulus quick iPhone layout fix */
+
+@media (max-width: 760px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  main {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  .grid {
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  .card,
+  section,
+  article {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .hero {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  .hero .row {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .hero button {
+    max-width: 100%;
+  }
+
+  .public-tool-callout,
+  .login-card,
+  .lobby-card {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .mini-game-picks,
+  .dealer-choice-buttons {
+    max-height: 45vh;
+    overflow-y: auto;
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+    width: 100%;
+    padding-bottom: 12px;
+  }
+
+  .mini-game-picks button,
+  .dealer-choice-buttons button {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .no-hand-card {
+    width: min(94vw, 420px) !important;
+    max-height: 72vh;
+    overflow-y: auto;
+    padding: 14px 12px !important;
+  }
+
+  .no-hand-card strong {
+    font-size: 18px !important;
+    line-height: 1.15;
+  }
+
+  .no-hand-card span {
+    font-size: 12px !important;
+  }
+
+  .no-hand-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .no-hand-actions button {
+    width: 100%;
+  }
+
+  .iphone-action-tray:has(.disabled),
+  .hero-action-tray:has(.disabled) {
+    max-height: 45vh;
+    overflow: hidden;
+  }
+}
