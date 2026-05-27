@@ -1107,106 +1107,256 @@ button.secondary.danger { border-color: rgba(251,113,133,.48); color: #ffd6dc; b
 .table-seat-pod.clock-warning .avatar-ring {
   box-shadow: 0 0 14px rgba(251,113,133,.44);
 }
-/* Romulus quick iPhone layout fix */
+
+/* Romulus v0.4.4 iPhone layout pass */
+.login-grid {
+  grid-template-columns: minmax(280px, 420px) 1fr;
+}
+.lobby-grid {
+  grid-template-columns: 350px 1fr;
+  align-items: start;
+}
+.no-hand-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+.no-hand-actions button {
+  max-width: 100%;
+}
+.game-chooser-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: max(14px, env(safe-area-inset-top)) 12px max(14px, env(safe-area-inset-bottom));
+  background: rgba(0,0,0,.64);
+  backdrop-filter: blur(10px);
+}
+.game-chooser-card {
+  width: min(720px, 100%);
+  max-height: min(82vh, 760px);
+  overflow: auto;
+  border-radius: 24px;
+  padding: 16px;
+  background: rgba(16,18,20,.97);
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 28px 90px rgba(0,0,0,.65);
+}
+.game-chooser-card h2 { margin: 0 0 4px; }
+.game-chooser-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.game-chooser-list button {
+  min-height: 48px;
+  text-align: left;
+  justify-content: flex-start;
+}
+.game-chooser-list .selected-game-choice {
+  background: #e8c66d;
+  color: #111;
+  border: 1px solid rgba(255,255,255,.45);
+}
 
 @media (max-width: 760px) {
-  html,
-  body {
-    max-width: 100%;
-    overflow-x: hidden;
-  }
-
+  body { overflow-x: hidden; }
   main {
     width: 100%;
     max-width: 100%;
     overflow-x: hidden;
-    padding-left: 12px !important;
-    padding-right: 12px !important;
   }
-
-  .grid {
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: start;
+  }
+  .hero > .row {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .hero > .row button,
+  .public-tool-callout button {
+    width: 100%;
+  }
+  .login-grid,
+  .lobby-grid {
+    display: grid !important;
     grid-template-columns: 1fr !important;
     width: 100% !important;
     max-width: 100% !important;
     overflow-x: hidden !important;
+    gap: 12px;
   }
-
-  .card,
-  section,
-  article {
-    max-width: 100%;
+  .login-grid > *,
+  .lobby-grid > *,
+  .card {
     min-width: 0;
-  }
-
-  .hero {
-    display: grid !important;
-    grid-template-columns: 1fr !important;
-    gap: 10px;
-  }
-
-  .hero .row {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .hero button {
     max-width: 100%;
   }
-
-  .public-tool-callout,
-  .login-card,
-  .lobby-card {
-    width: 100% !important;
-    max-width: 100% !important;
+  .public-tool-callout {
+    margin-left: 0;
+    margin-right: 0;
   }
-
-  .mini-game-picks,
-  .dealer-choice-buttons {
-    max-height: 45vh;
-    overflow-y: auto;
-    display: grid !important;
-    grid-template-columns: 1fr !important;
-    gap: 8px;
+  .lobby-grid .card .row[style] {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-content: stretch !important;
+  }
+  .lobby-grid .card .row[style] > .row {
+    display: grid;
+    grid-template-columns: 1fr;
     width: 100%;
-    padding-bottom: 12px;
   }
-
-  .mini-game-picks button,
-  .dealer-choice-buttons button {
+  .lobby-grid .card .row[style] button {
     width: 100%;
-    min-height: 48px;
   }
-
   .no-hand-card {
-    width: min(94vw, 420px) !important;
-    max-height: 72vh;
-    overflow-y: auto;
-    padding: 14px 12px !important;
-  }
-
-  .no-hand-card strong {
-    font-size: 18px !important;
-    line-height: 1.15;
-  }
-
-  .no-hand-card span {
-    font-size: 12px !important;
-  }
-
-  .no-hand-actions {
-    display: grid !important;
-    grid-template-columns: 1fr !important;
+    width: min(94%, 420px);
+    padding: 14px 12px;
     gap: 8px;
+  }
+  .no-hand-card strong {
+    font-size: 18px;
+    line-height: 1.1;
+  }
+  .no-hand-card span {
+    font-size: 12px;
+  }
+  .no-hand-actions {
     width: 100%;
   }
-
   .no-hand-actions button {
     width: 100%;
   }
+  .mini-game-picks { display: none !important; }
+  .game-chooser-layer {
+    align-items: stretch;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+  }
+  .game-chooser-card {
+    width: 100%;
+    max-height: 100%;
+    border-radius: 18px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+  .game-chooser-list {
+    grid-template-columns: 1fr;
+    overflow: auto;
+    padding-bottom: 12px;
+  }
+  .game-chooser-list button {
+    min-height: 50px;
+    text-align: center;
+  }
+  .dealer-choice-buttons {
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+  .dealer-choice-buttons button {
+    width: 100%;
+  }
+}
 
-  .iphone-action-tray:has(.disabled),
-  .hero-action-tray:has(.disabled) {
-    max-height: 45vh;
-    overflow: hidden;
+
+/* Romulus v0.4.5 action visibility + tighter seats */
+.seat-action-label {
+  margin-top: 1px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(232, 198, 109, .18);
+  border: 1px solid rgba(232, 198, 109, .34);
+  color: #f9df91;
+  font-size: 10px;
+  font-weight: 1000;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  max-width: 86px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seat-action-label.folded-action {
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.14);
+  color: rgba(244,241,232,.62);
+}
+.table-seat-pod.is-folded {
+  opacity: .52;
+  filter: grayscale(.55);
+}
+.table-seat-pod.is-folded .avatar-ring {
+  opacity: .72;
+}
+.table-seat-pod.is-folded .seat-name {
+  color: rgba(244,241,232,.58);
+}
+.table-seat-pod.is-folded .card-row,
+.table-seat-pod.is-folded .card-backs {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .table-seat-pod {
+    width: 82px !important;
+    min-height: 46px !important;
+    padding: 4px 3px 5px !important;
+    border-radius: 11px !important;
+    gap: 1px !important;
+  }
+  .multi-board .table-seat-pod:not(.is-me) {
+    width: 74px !important;
+    min-height: 42px !important;
+  }
+  .table-seat-pod.is-me {
+    width: 96px !important;
+    min-height: 48px !important;
+  }
+  .avatar-ring {
+    width: 21px !important;
+    height: 21px !important;
+    margin-top: -12px !important;
+    font-size: 10px !important;
+    border-width: 1px !important;
+  }
+  .seat-name {
+    max-width: 60px !important;
+    font-size: 9px !important;
+    line-height: 1.05 !important;
+  }
+  .seat-stack {
+    font-size: 8px !important;
+    line-height: 1.05 !important;
+  }
+  .seat-bet {
+    font-size: 8px !important;
+    padding: 2px 5px !important;
+  }
+  .seat-action-label {
+    font-size: 8px !important;
+    max-width: 64px !important;
+    padding: 2px 5px !important;
+  }
+  .table-seat-pod:not(.is-me) .card-back {
+    width: 12px !important;
+    height: 17px !important;
+  }
+  .table-seat-pod:not(.is-me) .card-backs {
+    max-width: 32px !important;
+  }
+  .table-seat-pod:not(.is-me) .card-face {
+    min-width: 20px !important;
+    height: 27px !important;
+    font-size: 9px !important;
+    border-radius: 5px !important;
   }
 }
