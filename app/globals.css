@@ -1056,3 +1056,37 @@ button.secondary.danger { border-color: rgba(251,113,133,.48); color: #ffd6dc; b
     width: 100%;
   }
 }
+
+/* Romulus v0.4.2: table-pod shot clock and cleaner player pods */
+.table-seat-pod.has-shot-clock::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 22px;
+  padding: 3px;
+  background: conic-gradient(
+    from -90deg,
+    #7dd3fc 0 var(--clock-progress, 100%),
+    rgba(255,255,255,.08) var(--clock-progress, 100%) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: -1;
+  filter: drop-shadow(0 0 10px rgba(125, 211, 252, .35));
+}
+.table-seat-pod.has-shot-clock.clock-warning::before {
+  background: conic-gradient(
+    from -90deg,
+    #fb7185 0 var(--clock-progress, 100%),
+    rgba(255,255,255,.08) var(--clock-progress, 100%) 100%
+  );
+  filter: drop-shadow(0 0 12px rgba(251, 113, 133, .46));
+}
+.table-seat-pod.has-shot-clock .avatar-ring {
+  box-shadow: 0 0 14px rgba(125,211,252,.34);
+}
+.table-seat-pod.clock-warning .avatar-ring {
+  box-shadow: 0 0 14px rgba(251,113,133,.44);
+}

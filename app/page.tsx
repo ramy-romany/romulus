@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent, TouchEvent } from "react";
+import type { CSSProperties, PointerEvent, TouchEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { GAME_CATALOG, playableWith } from "@/lib/game-engine/games";
 import type { Card } from "@/lib/game-engine/types";
@@ -3498,11 +3498,20 @@ function PokerRoom({
           const currentBet =
             activeHand?.summary.postedCentsByUserId?.[seat?.user_id ?? ""] ?? 0;
           const isActing = Boolean(seat && activeHand?.summary.actingUserId === seat.user_id);
+          const totalClockSeconds = Math.max(1, activeTable?.action_clock_seconds ?? 30);
+          const clockProgressPercent = isActing && secondsLeft !== null
+            ? Math.max(0, Math.min(100, (secondsLeft / totalClockSeconds) * 100))
+            : 0;
+          const seatStyle = {
+            left: `${position.x}%`,
+            top: `${position.y}%`,
+            "--clock-progress": `${clockProgressPercent}%`,
+          } as CSSProperties;
           return (
             <div
-              className={`table-seat-pod ${isMe ? "is-me" : ""} ${isActing ? "is-acting" : ""} ${!seat ? "is-empty" : ""}`}
+              className={`table-seat-pod ${isMe ? "is-me" : ""} ${isActing ? "is-acting has-shot-clock" : ""} ${isActing && secondsLeft !== null && secondsLeft <= 5 ? "clock-warning" : ""} ${!seat ? "is-empty" : ""}`}
               key={seatNumber}
-              style={{ left: `${position.x}%`, top: `${position.y}%` }}
+              style={seatStyle}
               title={position.label}
             >
               {(activeHand?.summary.dealerSeat ?? activeTable?.button_seat) === seatNumber && (
@@ -3556,14 +3565,6 @@ function PokerRoom({
                   )}
                   {showdownChoice && (
                     <span className="seat-choice">{showdownChoice}</span>
-                  )}
-                  {profile && profile.id !== seat.user_id && seat.is_active && (
-                    <button
-                      className="mini secondary"
-                      onClick={() => onSitOutPlayer(seat.user_id)}
-                    >
-                      Sit Out
-                    </button>
                   )}
                   {profile?.is_admin && profile.id !== seat.user_id && (
                     <button
