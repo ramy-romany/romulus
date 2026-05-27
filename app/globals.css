@@ -482,6 +482,23 @@ input[type="range"] { padding:0; accent-color:#e8c66d; height:34px; }
   background: rgba(0,0,0,.18);
   border: 1px solid rgba(255,255,255,.09);
 }
+
+.signed-money-input {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.signed-money-input button {
+  min-height: 42px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+.signed-money-input input {
+  width: 100%;
+}
+
 .settlement-total-check {
   margin-top: 12px;
   padding: 10px 12px;

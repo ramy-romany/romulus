@@ -3002,12 +3002,27 @@ function PublicSettlementTool({
             </label>
             <label>
               Won / Lost
-              <input
-                inputMode="decimal"
-                value={row.net}
-                onChange={(event) => onUpdate(row.id, { net: event.target.value })}
-                placeholder="250 or -250"
-              />
+              <div className="signed-money-input">
+                <button
+                  type="button"
+                  className={row.net.trim().startsWith("-") ? "danger" : "secondary"}
+                  onClick={() => {
+                    const current = row.net.trim();
+                    onUpdate(row.id, { net: current.startsWith("-") ? current.slice(1) : `-${current || ""}` });
+                  }}
+                  aria-label="Toggle loss amount"
+                >
+                  −
+                </button>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9.,-]*"
+                  value={row.net}
+                  onChange={(event) => onUpdate(row.id, { net: event.target.value.replace(/[^0-9.,-]/g, "") })}
+                  placeholder="250 or -250"
+                />
+              </div>
             </label>
             <button className="secondary" onClick={() => onRemove(row.id)} disabled={rows.length <= 2}>
               Remove
