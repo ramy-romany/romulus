@@ -324,6 +324,75 @@ function bestPlayerResults(state: RomulusHandState): PlayerResult[] {
   });
 }
 
+
+function playerResultsForSingleBoard(state: RomulusHandState, boardCards: Card[]): PlayerResult[] {
+  const game = findGame(state.gameId);
+  return (state.players ?? [])
+    .filter((player) => player.inHand && !player.folded)
+    .map((player) => {
+      const hole = state.holeCardsByUserId[player.userId] ?? [];
+      const high = game.family === 'omaha' ? bestOmahaHigh(hole, boardCards) : bestHoldemHigh(hole, boardCards);
+      return { userId: player.userId, name: player.name, high };
+    });
+}
+
+function resolveCostaRicaByBoard(state: RomulusHandState): ShowdownResolution {
+  const boards = (state.boards ?? []).filter((board) => !board.removed);
+  const pot = state.potCents ?? 0;
+  const payoutsByUserId: Record<string, number> = {};
+  const messages: string[] = [];
+  const highWinnerIds: string[] = [];
+  const winnerLabelsByUser = new Map<string, string>();
+
+  if (!boards.length || pot <= 0) {
+    return { supported: false, messages: ['No CostaRica board or pot to award.'], payoutsByUserId, highWinnerIds, lowWinnerIds: [], winnerBanners: [], primaryBanner: '' };
+  }
+
+  const baseShare = Math.floor(pot / boards.length);
+  let remainder = pot - baseShare * boards.length;
+  for (const board of boards) {
+    const boardPot = baseShare + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+    const results = playerResultsForSingleBoard(state, board.cards);
+    const boardWinners = winningHighIds(results);
+    if (!boardWinners.length) continue;
+    highWinnerIds.push(...boardWinners);
+    addPayouts(payoutsByUserId, splitCents(boardPot, boardWinners));
+    const best = resultById(results, boardWinners[0])?.high;
+    const names = namesFor(results, boardWinners);
+    const label = best?.label ? titleCaseReason(best.label) : 'best high';
+    messages.push(`CostaRica: ${board.id} high goes to ${names} with ${best?.label ?? 'best high'} for ${moneyText(boardPot)}.`);
+    for (const id of boardWinners) {
+      winnerLabelsByUser.set(id, `${winnerLabelsByUser.get(id) ? `${winnerLabelsByUser.get(id)} + ` : ''}${board.id} ${label}`);
+    }
+  }
+
+  if (!Object.keys(payoutsByUserId).length) {
+    return { supported: false, messages: ['Automatic CostaRica showdown could not score this hand. Use manual Award.'], payoutsByUserId, highWinnerIds: [...new Set(highWinnerIds)], lowWinnerIds: [], winnerBanners: [], primaryBanner: '' };
+  }
+
+  const namesById = new Map((state.players ?? []).map((player) => [player.userId, player.name]));
+  const winnerBanners = Object.entries(payoutsByUserId).map(([userId, amountCents]) => ({
+    userId,
+    name: namesById.get(userId) ?? 'Player',
+    amountCents,
+    kind: 'high' as const,
+    reason: `wins board high with ${winnerLabelsByUser.get(userId) ?? 'best high'}`,
+  }));
+  const primaryBanner = winnerBanners.map(bannerLine).join(' · ');
+  if (primaryBanner) messages.push(primaryBanner);
+
+  return {
+    supported: true,
+    messages,
+    payoutsByUserId,
+    highWinnerIds: [...new Set(highWinnerIds)],
+    lowWinnerIds: [],
+    winnerBanners,
+    primaryBanner,
+  };
+}
+
 function winningHighIds(results: PlayerResult[]): string[] {
   const valid = results.filter((result) => result.high);
   if (!valid.length) return [];
@@ -427,6 +496,10 @@ function moneyText(amountCents: number) {
 
 export function resolveShowdown(state: RomulusHandState): ShowdownResolution {
   const game = findGame(state.gameId);
+  if (game.id.startsWith('costarica-')) {
+    return resolveCostaRicaByBoard(state);
+  }
+
   const results = bestPlayerResults(state);
   const highWinnerIds = winningHighIds(results);
   const lowWinnerIds = game.lowRule ? winningLowIds(results) : [];

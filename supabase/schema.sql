@@ -22,6 +22,11 @@ create table if not exists tables (
   current_game_id text not null default 'nlh',
   game_selection_mode text not null default 'dealer-choice' check (game_selection_mode in ('dealer-choice','random')),
   random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota','acey-deucey'],
+  disabled_game_ids text[] not null default array[]::text[],
+  felt_theme text not null default 'green',
+  card_back_theme text not null default 'red',
+  room_theme text not null default 'dark',
+  deck_mode text not null default 'standard',
   button_seat integer not null default 1,
   paused boolean not null default false,
   status text not null default 'open',
@@ -34,6 +39,11 @@ alter table tables add column if not exists action_deadline timestamptz;
 alter table tables add column if not exists current_game_id text not null default 'nlh';
 alter table tables add column if not exists game_selection_mode text not null default 'dealer-choice';
 alter table tables add column if not exists random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota','acey-deucey'];
+alter table tables add column if not exists disabled_game_ids text[] not null default array[]::text[];
+alter table tables add column if not exists felt_theme text not null default 'green';
+alter table tables add column if not exists card_back_theme text not null default 'red';
+alter table tables add column if not exists room_theme text not null default 'dark';
+alter table tables add column if not exists deck_mode text not null default 'standard';
 alter table tables add column if not exists button_seat integer not null default 1;
 alter table tables add column if not exists paused boolean not null default false;
 

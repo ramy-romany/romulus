@@ -41,6 +41,11 @@ type PokerTable = {
   current_game_id?: string | null;
   game_selection_mode?: "dealer-choice" | "random" | null;
   random_game_ids?: string[] | null;
+  disabled_game_ids?: string[] | null;
+  felt_theme?: 'green' | 'blue' | 'burgundy' | 'black' | null;
+  card_back_theme?: 'red' | 'blue' | 'black' | 'gold' | null;
+  room_theme?: 'dark' | 'casino' | 'minimal' | null;
+  deck_mode?: 'standard' | 'four-color' | null;
   button_seat?: number | null;
   paused?: boolean | null;
   created_at: string;
@@ -232,6 +237,30 @@ function aceyRankValue(card: Card | null | undefined): number {
   return card ? ACEY_RANK_VALUE[card.rank] : 0;
 }
 
+
+const DISPLAY_RANK_PRIORITY: Record<Card['rank'], number> = {
+  A: 14,
+  K: 13,
+  Q: 12,
+  J: 11,
+  T: 10,
+  '9': 9,
+  '8': 8,
+  '7': 7,
+  '6': 6,
+  '5': 5,
+  '4': 4,
+  '3': 3,
+  '2': 2,
+};
+const DISPLAY_SUIT_PRIORITY: Record<Card['suit'], number> = { s: 4, h: 3, d: 2, c: 1 };
+function sortCardsForDisplay(cards: Card[]): Card[] {
+  return [...cards].sort((a, b) =>
+    DISPLAY_RANK_PRIORITY[b.rank] - DISPLAY_RANK_PRIORITY[a.rank] ||
+    DISPLAY_SUIT_PRIORITY[b.suit] - DISPLAY_SUIT_PRIORITY[a.suit],
+  );
+}
+
 function shouldRefreshAceyDeck(state: RomulusHandState): boolean {
   const used = state.aceyDuecy?.cardsUsedThisDeck ?? (52 - (state.deck?.length ?? 52));
   return used >= Math.ceil(52 * 0.55) || (state.deck?.length ?? 0) < 3;
@@ -316,6 +345,7 @@ export default function HomePage() {
 
   const autoResolveKeyRef = useRef("");
   const autoNextHandKeyRef = useRef("");
+  const actionTimeoutKeyRef = useRef("");
 
   const [tables, setTables] = useState<PokerTable[]>([]);
   const [activeTableId, setActiveTableId] = useState<string>("");
@@ -367,6 +397,37 @@ export default function HomePage() {
   useEffect(() => {
     const timer = window.setInterval(() => setClockTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register("/sw.js").then((registration) => {
+      registration.update();
+      const updateTimer = window.setInterval(() => registration.update(), 60_000);
+      const onVisibility = () => {
+        if (document.visibilityState === "visible") registration.update();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) {
+            worker.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+      });
+      return () => {
+        window.clearInterval(updateTimer);
+        document.removeEventListener("visibilitychange", onVisibility);
+      };
+    }).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -605,6 +666,11 @@ export default function HomePage() {
         current_game_id: "nlh",
         game_selection_mode: "dealer-choice",
         random_game_ids: GAME_CATALOG.map((game) => game.id),
+        disabled_game_ids: [],
+        felt_theme: 'green',
+        card_back_theme: 'red',
+        room_theme: 'dark',
+        deck_mode: 'standard',
         button_seat: 1,
       })
       .select("*")
@@ -690,6 +756,26 @@ export default function HomePage() {
         activeTableId,
         `${target.profiles?.display_name ?? "Player"} left the table.`,
       );
+  }
+
+  async function setPlayerSittingStatus(userId: string, sittingIn: boolean) {
+    if (!activeTableId || !profile) return;
+    const target = seats.find((seat) => seat.user_id === userId);
+    if (!target) return;
+    const { error } = await supabase
+      .from("table_seats")
+      .update({ is_active: sittingIn })
+      .eq("table_id", activeTableId)
+      .eq("user_id", userId);
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+    const name = target.profiles?.display_name ?? target.profiles?.username ?? "Player";
+    await postSystemMessage(
+      activeTableId,
+      `${name} was ${sittingIn ? "sat back in" : "sat out"}${profile.id !== userId ? ` by ${profile.display_name}` : ""}.`,
+    );
   }
 
   async function addBuyIn() {
@@ -795,6 +881,10 @@ export default function HomePage() {
   }
 
   async function chooseGame(gameId: string) {
+    if (activeTable?.disabled_game_ids?.includes(gameId)) {
+      setNotice("That game is disabled for this table.");
+      return;
+    }
     const game = findGame(gameId);
     await updateTablePatch({ current_game_id: game.id });
     if (activeTableId && profile)
@@ -805,26 +895,43 @@ export default function HomePage() {
   }
 
   async function chooseRandomGame() {
+    const disabled = activeTable?.disabled_game_ids ?? [];
     const randomIds = activeTable?.random_game_ids?.length
-      ? activeTable.random_game_ids
-      : GAME_CATALOG.map((game) => game.id);
+      ? activeTable.random_game_ids.filter((id) => !disabled.includes(id))
+      : GAME_CATALOG.map((game) => game.id).filter((id) => !disabled.includes(id));
     const playable = GAME_CATALOG.filter((game) =>
+      !disabled.includes(game.id) &&
       randomIds.includes(game.id) &&
       playableWith(game, seatedPlayers.length || 1),
     );
     const game =
-      playable[Math.floor(Math.random() * playable.length)] ?? GAME_CATALOG[0];
+      playable[Math.floor(Math.random() * playable.length)] ?? GAME_CATALOG.find((item) => !disabled.includes(item.id)) ?? GAME_CATALOG[0];
     await chooseGame(game.id);
   }
 
   async function updateRandomGamePool(gameId: string, checked: boolean) {
     const current = activeTable?.random_game_ids?.length
       ? activeTable.random_game_ids
-      : GAME_CATALOG.map((game) => game.id);
+      : GAME_CATALOG.map((game) => game.id).filter((id) => !(activeTable?.disabled_game_ids ?? []).includes(id));
     const next = checked
       ? [...new Set([...current, gameId])]
       : current.filter((id) => id !== gameId);
     await updateTablePatch({ random_game_ids: next.length ? next : [gameId] });
+  }
+
+  async function setGameEnabled(gameId: string, enabled: boolean) {
+    if (!profile?.is_admin) return;
+    const current = activeTable?.disabled_game_ids ?? [];
+    const nextDisabled = enabled
+      ? current.filter((id) => id !== gameId)
+      : [...new Set([...current, gameId])];
+    const nextRandomPool = (activeTable?.random_game_ids ?? GAME_CATALOG.map((game) => game.id))
+      .filter((id) => enabled || id !== gameId);
+    await updateTablePatch({
+      disabled_game_ids: nextDisabled,
+      random_game_ids: nextRandomPool.length ? nextRandomPool : ["nlh"],
+      current_game_id: !enabled && activeTable?.current_game_id === gameId ? "nlh" : activeTable?.current_game_id,
+    });
   }
 
   async function chooseGameAndStart(gameId: string) {
@@ -920,16 +1027,19 @@ export default function HomePage() {
       }
 
       let gameId = options?.gameIdOverride || table.current_game_id || "nlh";
+      const disabledGameIdsForTable = table.disabled_game_ids ?? [];
+      if (disabledGameIdsForTable.includes(gameId)) gameId = "nlh";
       if (table.game_selection_mode === "random" && !options?.gameIdOverride) {
         const randomIds = table.random_game_ids?.length
           ? table.random_game_ids
           : GAME_CATALOG.map((gameOption) => gameOption.id);
         const randomPool = GAME_CATALOG.filter(
           (gameOption) =>
+            !disabledGameIdsForTable.includes(gameOption.id) &&
             randomIds.includes(gameOption.id) && playableWith(gameOption, activeSeats.length),
         );
         const randomGame =
-          randomPool[Math.floor(Math.random() * randomPool.length)] ?? GAME_CATALOG[0];
+          randomPool[Math.floor(Math.random() * randomPool.length)] ?? GAME_CATALOG.find((gameOption) => !disabledGameIdsForTable.includes(gameOption.id)) ?? GAME_CATALOG[0];
         gameId = randomGame.id;
         await supabase
           .from("tables")
@@ -1092,12 +1202,16 @@ export default function HomePage() {
       }
 
       const nextButtonSeat = nextOccupiedSeat(activeSeats, dealer.seat_number);
-      if (nextButtonSeat) {
-        await supabase
-          .from("tables")
-          .update({ button_seat: nextButtonSeat.seat_number })
-          .eq("id", activeTableId);
-      }
+      const nextDeadline = state.actingUserId
+        ? new Date(Date.now() + (table.action_clock_seconds || 30) * 1000).toISOString()
+        : null;
+      await supabase
+        .from("tables")
+        .update({
+          button_seat: nextButtonSeat?.seat_number ?? table.button_seat,
+          action_deadline: nextDeadline,
+        })
+        .eq("id", activeTableId);
 
       await postSystemMessage(
         activeTableId,
@@ -1125,7 +1239,15 @@ export default function HomePage() {
       .update(update)
       .eq("id", hand.id);
     if (error) setNotice(error.message);
-    else if (activeTableId) await refreshTable(activeTableId);
+    else {
+      if (activeTableId) {
+        const nextDeadline = state.gameplayStatus === "betting" && state.actingUserId && !activeTable?.paused
+          ? new Date(Date.now() + (activeTable?.action_clock_seconds || 30) * 1000).toISOString()
+          : null;
+        await supabase.from("tables").update({ action_deadline: nextDeadline }).eq("id", activeTableId);
+        await refreshTable(activeTableId);
+      }
+    }
   }
 
   function scheduleNextHand(completedHandId: string) {
@@ -1723,6 +1845,27 @@ export default function HomePage() {
     });
   }
 
+
+  async function autoTimeoutAction() {
+    if (!activeHand || !activeTable || activeTable.paused) return;
+    const state = deepCopyHandState(activeHand.summary);
+    ensureGameplayState(state);
+    if (state.gameplayStatus !== "betting" || !state.actingUserId) return;
+    const actor = state.players?.find((player) => player.userId === state.actingUserId);
+    if (!actor || actor.folded || actor.allIn) return;
+    const callCents = callAmountFor(state, actor.userId);
+    if (callCents > 0) {
+      actor.folded = true;
+      actor.inHand = false;
+      state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), actor.userId])];
+      state.messages.push(`${actor.name} timed out and folded.`);
+    } else {
+      state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), actor.userId])];
+      state.messages.push(`${actor.name} timed out and checked.`);
+    }
+    await resolveAndSaveGameplayState(state);
+  }
+
   const activeHand = hands[0] ?? null;
   const seatedPlayers = useMemo(
     () => seats.filter((seat) => seat.is_active),
@@ -1731,12 +1874,14 @@ export default function HomePage() {
   const mySeat = profile
     ? seats.find((seat) => seat.user_id === profile.id)
     : null;
+  const disabledGameIds = activeTable?.disabled_game_ids ?? [];
+  const activeGames = GAME_CATALOG.filter((game) => !disabledGameIds.includes(game.id));
   const selectedGame = findGame(activeTable?.current_game_id || "nlh");
   const gameSelectionMode = activeTable?.game_selection_mode ?? "dealer-choice";
   const randomGameIds = activeTable?.random_game_ids?.length
-    ? activeTable.random_game_ids
-    : GAME_CATALOG.map((game) => game.id);
-  const playableGames = GAME_CATALOG.filter((game) =>
+    ? activeTable.random_game_ids.filter((id) => !disabledGameIds.includes(id))
+    : activeGames.map((game) => game.id);
+  const playableGames = activeGames.filter((game) =>
     playableWith(game, seatedPlayers.length || 1),
   );
   const handIsComplete = activeHand?.summary.gameplayStatus === "complete" || activeHand?.summary.street === "complete";
@@ -1815,6 +1960,23 @@ export default function HomePage() {
       cardsUsedThisDeck: acey?.cardsUsedThisDeck ?? 0,
     };
   }, [activeHand?.id, activeHand?.summary.aceyDuecy, activeHand?.summary.potCents, profile?.id, activeTable?.paused]);
+
+
+  useEffect(() => {
+    if (!activeTable) return;
+    setFeltTheme(activeTable.felt_theme ?? "green");
+    setCardBackTheme(activeTable.card_back_theme ?? "red");
+    setRoomTheme(activeTable.room_theme ?? "dark");
+    setDeckMode(activeTable.deck_mode ?? "standard");
+  }, [activeTable?.id, activeTable?.felt_theme, activeTable?.card_back_theme, activeTable?.room_theme, activeTable?.deck_mode]);
+
+  useEffect(() => {
+    if (!activeHand || !activeTable || activeTable.paused || secondsLeft !== 0 || !activeTable.action_deadline) return;
+    const key = `${activeHand.id}:${activeHand.summary.actingUserId}:${activeTable.action_deadline}`;
+    if (actionTimeoutKeyRef.current === key) return;
+    actionTimeoutKeyRef.current = key;
+    autoTimeoutAction();
+  }, [secondsLeft, activeHand?.id, activeHand?.summary.actingUserId, activeTable?.action_deadline, activeTable?.paused]);
 
   useEffect(() => {
     if (!profile?.is_admin || !activeHand) return;
@@ -2258,17 +2420,27 @@ export default function HomePage() {
                 </span>
               </div>
               <hr />
-              <button onClick={sitDown} disabled={Boolean(mySeat)}>
-                Sit Down
-              </button>
-              {mySeat && (
-                <button
-                  className="secondary"
-                  onClick={() => standUp(profile!.id)}
-                >
-                  Stand Up
+              <div className="row table-quick-controls">
+                <button onClick={sitDown} disabled={Boolean(mySeat)}>
+                  Sit Down
                 </button>
-              )}
+                {mySeat && (
+                  <button
+                    className="secondary"
+                    onClick={() => setPlayerSittingStatus(profile!.id, !mySeat.is_active)}
+                  >
+                    {mySeat.is_active ? "Sit Out" : "Sit In"}
+                  </button>
+                )}
+                {mySeat && (
+                  <button
+                    className="secondary"
+                    onClick={() => standUp(profile!.id)}
+                  >
+                    Stand Up
+                  </button>
+                )}
+              </div>
               <hr />
               <label>
                 Buy in amount
@@ -2281,42 +2453,6 @@ export default function HomePage() {
               <button onClick={addBuyIn} disabled={!mySeat}>
                 Buy In
               </button>
-              <hr />
-              <label>
-                Cash out amount
-                <input
-                  value={cashOutDollars}
-                  onChange={(event) => setCashOutDollars(event.target.value)}
-                />
-              </label>
-              <br />
-              <button
-                className="secondary"
-                onClick={cashOut}
-                disabled={!mySeat}
-              >
-                Cash Out
-              </button>
-              <hr />
-              <h3>Account</h3>
-              <label>
-                New password
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  placeholder="At least 8 characters"
-                />
-              </label>
-              <br />
-              <button
-                className="secondary"
-                onClick={changePassword}
-                disabled={newPassword.trim().length < 8}
-              >
-                Change Password
-              </button>
-              {passwordNotice && <p className="muted">{passwordNotice}</p>}
             </div>
 
             <div className="card">
@@ -2361,7 +2497,7 @@ export default function HomePage() {
                     Romulus will pick the next hand at random from the checked playable games.
                   </p>
                   <div className="random-game-list">
-                    {GAME_CATALOG.map((game) => {
+                    {activeGames.map((game) => {
                       const isPlayable = playableWith(game, seatedPlayers.length || 1);
                       return (
                         <label className="toggle-row" key={game.id}>
@@ -2380,6 +2516,25 @@ export default function HomePage() {
                   <button className="secondary" onClick={chooseRandomGame}>
                     Pick Random Now
                   </button>
+                </>
+              )}
+              {profile?.is_admin && (
+                <>
+                  <hr />
+                  <h3>Admin game list</h3>
+                  <p className="muted">Disable a game to remove it from random mode and dealer-choice buttons for this table.</p>
+                  <div className="random-game-list">
+                    {GAME_CATALOG.map((game) => (
+                      <label className="toggle-row" key={`admin-${game.id}`}>
+                        <input
+                          type="checkbox"
+                          checked={!disabledGameIds.includes(game.id)}
+                          onChange={(event) => setGameEnabled(game.id, event.target.checked)}
+                        />
+                        {game.displayName}
+                      </label>
+                    ))}
+                  </div>
                 </>
               )}
               <hr />
@@ -2440,9 +2595,11 @@ export default function HomePage() {
                 Felt color
                 <select
                   value={feltTheme}
-                  onChange={(event) =>
-                    setFeltTheme(event.target.value as typeof feltTheme)
-                  }
+                  onChange={(event) => {
+                    const value = event.target.value as typeof feltTheme;
+                    setFeltTheme(value);
+                    updateTablePatch({ felt_theme: value });
+                  }}
                 >
                   <option value="green">Classic green</option>
                   <option value="blue">Blue</option>
@@ -2455,9 +2612,11 @@ export default function HomePage() {
                 Card backs
                 <select
                   value={cardBackTheme}
-                  onChange={(event) =>
-                    setCardBackTheme(event.target.value as typeof cardBackTheme)
-                  }
+                  onChange={(event) => {
+                    const value = event.target.value as typeof cardBackTheme;
+                    setCardBackTheme(value);
+                    updateTablePatch({ card_back_theme: value });
+                  }}
                 >
                   <option value="red">Red</option>
                   <option value="blue">Blue</option>
@@ -2470,9 +2629,11 @@ export default function HomePage() {
                 Deck style
                 <select
                   value={deckMode}
-                  onChange={(event) =>
-                    setDeckMode(event.target.value as typeof deckMode)
-                  }
+                  onChange={(event) => {
+                    const value = event.target.value as typeof deckMode;
+                    setDeckMode(value);
+                    updateTablePatch({ deck_mode: value });
+                  }}
                 >
                   <option value="standard">Standard 2-color</option>
                   <option value="four-color">4-color suits</option>
@@ -2483,9 +2644,11 @@ export default function HomePage() {
                 Room style
                 <select
                   value={roomTheme}
-                  onChange={(event) =>
-                    setRoomTheme(event.target.value as typeof roomTheme)
-                  }
+                  onChange={(event) => {
+                    const value = event.target.value as typeof roomTheme;
+                    setRoomTheme(value);
+                    updateTablePatch({ room_theme: value });
+                  }}
                 >
                   <option value="dark">Dark private room</option>
                   <option value="casino">Bright casino</option>
@@ -2534,6 +2697,15 @@ export default function HomePage() {
               onApproveResult={approveResult}
               onAwardPot={awardPotTo}
               onKick={standUp}
+              onSitOutPlayer={(userId) => setPlayerSittingStatus(userId, false)}
+              onSitDown={sitDown}
+              onSitIn={() => profile && setPlayerSittingStatus(profile.id, true)}
+              onSitOut={() => profile && setPlayerSittingStatus(profile.id, false)}
+              onStandUpSelf={() => profile && standUp(profile.id)}
+              buyInDollars={buyInDollars}
+              setBuyInDollars={setBuyInDollars}
+              onBuyIn={addBuyIn}
+              onLobby={() => setActiveTableId("")}
               onAccountOpen={() => setShowAccountPanel(true)}
               onChooseGameAndStart={chooseGameAndStart}
               winnerAnnouncement={winnerAnnouncement}
@@ -2787,6 +2959,15 @@ type PokerRoomProps = {
   onApproveResult: () => void;
   onAwardPot: (userId: string) => void;
   onKick: (userId: string) => void;
+  onSitOutPlayer: (userId: string) => void;
+  onSitDown: () => void;
+  onSitIn: () => void;
+  onSitOut: () => void;
+  onStandUpSelf: () => void;
+  buyInDollars: string;
+  setBuyInDollars: (value: string) => void;
+  onBuyIn: () => void;
+  onLobby: () => void;
   onAccountOpen: () => void;
   onChooseGameAndStart: (gameId: string) => void;
   winnerAnnouncement: WinnerAnnouncement | null;
@@ -2826,6 +3007,15 @@ function PokerRoom({
   onApproveResult,
   onAwardPot,
   onKick,
+  onSitOutPlayer,
+  onSitDown,
+  onSitIn,
+  onSitOut,
+  onStandUpSelf,
+  buyInDollars,
+  setBuyInDollars,
+  onBuyIn,
+  onLobby,
   onAccountOpen,
   onChooseGameAndStart,
   winnerAnnouncement,
@@ -2833,8 +3023,9 @@ function PokerRoom({
   const mySeat = profile
     ? seats.find((seat) => seat.user_id === profile.id)
     : null;
-  const myHoleCards =
-    activeHand?.summary.holeCardsByUserId?.[profile?.id ?? ""] ?? [];
+  const myHoleCards = sortCardsForDisplay(
+    activeHand?.summary.holeCardsByUserId?.[profile?.id ?? ""] ?? [],
+  );
   const potDollars = centsToDollars(activeHand?.summary.potCents ?? 0);
   const potAmountForButton = String(
     Math.max(
@@ -3021,6 +3212,24 @@ function PokerRoom({
         </div>
       </div>
 
+      <div className="room-table-controls">
+        <div className="seat-action-cluster">
+          <button onClick={onSitDown} disabled={Boolean(mySeat)}>Sit Down</button>
+          <button className="secondary" onClick={mySeat?.is_active ? onSitOut : onSitIn} disabled={!mySeat}>
+            {mySeat?.is_active ? "Sit Out" : "Sit In"}
+          </button>
+          <button className="secondary" onClick={onStandUpSelf} disabled={!mySeat}>Stand Up</button>
+        </div>
+        <div className="buyin-inline">
+          <label>
+            Buy in
+            <input value={buyInDollars} onChange={(event) => setBuyInDollars(event.target.value)} inputMode="decimal" />
+          </label>
+          <button onClick={onBuyIn} disabled={!mySeat}>Buy In</button>
+        </div>
+        <button className="secondary lobby-icon-button" onClick={onLobby} aria-label="Lobby" title="Lobby">⌂</button>
+      </div>
+
       <div className="poker-stage">
         <div className="poker-table-surface">
           <div className="table-rail" />
@@ -3049,7 +3258,16 @@ function PokerRoom({
                       {board.id}
                       {board.removed ? " · removed" : ""}
                     </div>
-                    <CardRow cards={board.cards} deckMode={deckMode} />
+                    {activeHand.summary.gameId === "acey-deucey" ? (
+                      <AceyCardLine
+                        left={activeHand.summary.aceyDuecy?.leftCard ?? board.cards[0] ?? null}
+                        middle={activeHand.summary.aceyDuecy?.middleCard ?? null}
+                        right={activeHand.summary.aceyDuecy?.rightCard ?? board.cards[board.cards.length - 1] ?? null}
+                        deckMode={deckMode}
+                      />
+                    ) : (
+                      <CardRow cards={board.cards} deckMode={deckMode} />
+                    )}
                     {board.removedReason && (
                       <small className="muted">{board.removedReason}</small>
                     )}
@@ -3126,7 +3344,7 @@ function PokerRoom({
                         "Player")}
                   </div>
                   <div className="seat-stack">
-                    {centsToDollars(seat.stack_cents)}
+                    {centsToDollars(seat.stack_cents)}{!seat.is_active ? " · sitting out" : ""}
                   </div>
                   {currentBet > 0 && (
                     <div className="seat-bet">
@@ -3140,14 +3358,14 @@ function PokerRoom({
                       deckMode={deckMode}
                     />
                   )}
-                  {visuallyDealtHoleCards.length > 0 && canSeeHole && (
+                  {visuallyDealtHoleCards.length > 0 && canSeeHole && !isMe && (
                     <CardRow
                       cards={visuallyDealtHoleCards}
                       label={isMe ? undefined : isShowdownRevealed ? "Showdown" : "Shown"}
                       deckMode={deckMode}
                     />
                   )}
-                  {visibleHoleCount > 0 && !canSeeHole && (
+                  {visibleHoleCount > 0 && !canSeeHole && !isMe && (
                     <CardBacks
                       count={isMe ? Math.min(visibleHoleCount, 6) : Math.min(visibleHoleCount, 2)}
                       color={cardBackTheme}
@@ -3155,6 +3373,14 @@ function PokerRoom({
                   )}
                   {showdownChoice && (
                     <span className="seat-choice">{showdownChoice}</span>
+                  )}
+                  {profile && profile.id !== seat.user_id && seat.is_active && (
+                    <button
+                      className="mini secondary"
+                      onClick={() => onSitOutPlayer(seat.user_id)}
+                    >
+                      Sit Out
+                    </button>
                   )}
                   {profile?.is_admin && profile.id !== seat.user_id && (
                     <button
@@ -3242,7 +3468,7 @@ function PokerRoom({
         >
           <div>
             <small className="muted">
-              Your hand · double tap to check · swipe still works
+Your hand · sorted A→2 / ♠→♣
             </small>
             {myHoleCards.length ? (
               <CardRow cards={myVisibleHoleCards} deckMode={deckMode} hero />
@@ -3282,7 +3508,7 @@ function PokerRoom({
                 <strong>{aceyControls.currentPlayerName || "Player"}</strong>
                 <span>
                   {aceyControls.leftCard && aceyControls.rightCard
-                    ? `${formatCard(aceyControls.leftCard)} / ${aceyControls.middleCard ? `${formatCard(aceyControls.middleCard)} / ` : ""}${formatCard(aceyControls.rightCard)}`
+                    ? `${formatCard(aceyControls.leftCard)}  ${aceyControls.middleCard ? `· ${formatCard(aceyControls.middleCard)} ·` : "· ___ ·"}  ${formatCard(aceyControls.rightCard)}`
                     : "Waiting for cards"}
                 </span>
                 {aceyControls.mustBetAfterReplace && <b>Replacement used · minimum bet is $50</b>}
@@ -3442,6 +3668,26 @@ function CardBacks({ count, color }: { count: number; color: CardBackTheme }) {
       {Array.from({ length: count }, (_, index) => (
         <span className={`card-back back-${color}`} key={index} />
       ))}
+    </div>
+  );
+}
+
+function AceyCardLine({
+  left,
+  middle,
+  right,
+  deckMode = "standard",
+}: {
+  left: Card | null;
+  middle: Card | null;
+  right: Card | null;
+  deckMode?: DeckMode;
+}) {
+  return (
+    <div className="acey-card-line">
+      {left ? <CardRow cards={[left]} deckMode={deckMode} /> : <span className="acey-card-slot" />}
+      {middle ? <CardRow cards={[middle]} deckMode={deckMode} /> : <span className="acey-card-slot middle-slot">Middle</span>}
+      {right ? <CardRow cards={[right]} deckMode={deckMode} /> : <span className="acey-card-slot" />}
     </div>
   );
 }
