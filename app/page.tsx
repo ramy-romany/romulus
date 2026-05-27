@@ -83,6 +83,13 @@ type TableMessage = {
   profiles?: { username: string; display_name: string } | null;
 };
 
+type WinnerAnnouncement = {
+  handId: string;
+  handNumber: number;
+  primaryBanner: string;
+  banners: NonNullable<NonNullable<RomulusHandState["showdownResult"]>["winnerBanners"]>;
+};
+
 const EMPTY_TABLE_NAME = "Friday Night Romulus";
 const MAX_TABLE_SEATS = 6;
 
@@ -210,6 +217,7 @@ export default function HomePage() {
   const [newPassword, setNewPassword] = useState("");
   const [passwordNotice, setPasswordNotice] = useState("");
   const [autoStartNextHand, setAutoStartNextHand] = useState(true);
+  const [winnerAnnouncement, setWinnerAnnouncement] = useState<WinnerAnnouncement | null>(null);
 
   const autoResolveKeyRef = useRef("");
   const autoNextHandKeyRef = useRef("");
@@ -901,6 +909,14 @@ export default function HomePage() {
         return;
       }
 
+      const nextButtonSeat = nextOccupiedSeat(activeSeats, dealer.seat_number);
+      if (nextButtonSeat) {
+        await supabase
+          .from("tables")
+          .update({ button_seat: nextButtonSeat.seat_number })
+          .eq("id", activeTableId);
+      }
+
       await postSystemMessage(
         activeTableId,
         `Hand #${handNumber} started: ${game.displayName}.`,
@@ -936,7 +952,7 @@ export default function HomePage() {
     autoNextHandKeyRef.current = completedHandId;
     window.setTimeout(() => {
       startHand({ force: true, reason: "Starting next hand…" });
-    }, 1400);
+    }, 5600);
   }
 
   function finishBettingRound(state: RomulusHandState): RomulusHandState {
@@ -1056,6 +1072,8 @@ export default function HomePage() {
       highWinnerIds: resolution.highWinnerIds,
       lowWinnerIds: resolution.lowWinnerIds,
       messages: resolution.messages,
+      winnerBanners: resolution.winnerBanners,
+      primaryBanner: resolution.primaryBanner,
     };
     workingState.resultApplied = true;
     workingState.potCents = 0;
@@ -1085,7 +1103,25 @@ export default function HomePage() {
       state.street = "complete";
       state.gameplayStatus = "complete";
       state.actingUserId = null;
-      state.messages.push(`${winner.name} wins ${centsToDollars(pot)} uncontested.`);
+      const uncontestedBanner = `${winner.name} WINS uncontested · ${centsToDollars(pot)}`;
+      state.messages.push(uncontestedBanner);
+      state.showdownResult = {
+        payoutsByUserId: { [winner.userId]: pot },
+        highWinnerIds: [winner.userId],
+        lowWinnerIds: [],
+        messages: [uncontestedBanner],
+        primaryBanner: uncontestedBanner,
+        winnerBanners: [
+          {
+            userId: winner.userId,
+            name: winner.name,
+            amountCents: pot,
+            reason: "wins uncontested",
+            kind: "uncontested",
+          },
+        ],
+      };
+      state.resultApplied = true;
       if (seat && pot > 0 && activeTableId) {
         await supabase
           .from("table_seats")
@@ -1284,11 +1320,30 @@ export default function HomePage() {
     const state: RomulusHandState = JSON.parse(
       JSON.stringify(activeHand.summary),
     );
-    state.messages.push(
-      `Pot awarded to ${winner.profiles?.display_name ?? "winner"}: ${centsToDollars(pot)}.`,
-    );
+    const winnerName = winner.profiles?.display_name ?? winner.profiles?.username ?? "Winner";
+    const manualBanner = `${winnerName} WINS by admin award · ${centsToDollars(pot)}`;
+    state.messages.push(manualBanner);
+    state.showdownResult = {
+      payoutsByUserId: { [userId]: pot },
+      highWinnerIds: [userId],
+      lowWinnerIds: [],
+      messages: [manualBanner],
+      primaryBanner: manualBanner,
+      winnerBanners: [
+        {
+          userId,
+          name: winnerName,
+          amountCents: pot,
+          reason: "wins by admin award",
+          kind: "split",
+        },
+      ],
+    };
+    state.resultApplied = true;
     state.potCents = 0;
     state.street = "complete";
+    state.gameplayStatus = "complete";
+    state.actingUserId = null;
     state.approved = !activeTable?.require_result_approval;
     await supabase
       .from("table_seats")
@@ -1299,6 +1354,7 @@ export default function HomePage() {
       state,
       activeTable?.require_result_approval ? "pending" : "approved",
     );
+    if (activeHand?.id) scheduleNextHand(activeHand.id);
   }
 
   async function approveResult() {
@@ -1400,6 +1456,32 @@ export default function HomePage() {
     activeHand?.summary.street,
     activeHand?.summary.potCents,
     activeHand?.summary.messages.length,
+  ]);
+
+  useEffect(() => {
+    if (!activeHand?.summary.showdownResult?.winnerBanners?.length) return;
+    const primaryBanner =
+      activeHand.summary.showdownResult.primaryBanner ||
+      activeHand.summary.showdownResult.messages?.slice(-1)?.[0] ||
+      "Hand complete.";
+    const nextAnnouncement: WinnerAnnouncement = {
+      handId: activeHand.id,
+      handNumber: activeHand.hand_number,
+      primaryBanner,
+      banners: activeHand.summary.showdownResult.winnerBanners,
+    };
+    setWinnerAnnouncement(nextAnnouncement);
+    const timer = window.setTimeout(() => {
+      setWinnerAnnouncement((current) =>
+        current?.handId === activeHand.id ? null : current,
+      );
+    }, 8500);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeHand?.id,
+    activeHand?.hand_number,
+    activeHand?.summary.showdownResult?.primaryBanner,
+    activeHand?.summary.showdownResult?.winnerBanners?.length,
   ]);
 
   useEffect(() => {
@@ -1889,6 +1971,7 @@ export default function HomePage() {
               onApproveResult={approveResult}
               onAwardPot={awardPotTo}
               onKick={standUp}
+              winnerAnnouncement={winnerAnnouncement}
             />
           </section>
 
@@ -2002,6 +2085,7 @@ type PokerRoomProps = {
   onApproveResult: () => void;
   onAwardPot: (userId: string) => void;
   onKick: (userId: string) => void;
+  winnerAnnouncement: WinnerAnnouncement | null;
 };
 
 function PokerRoom({
@@ -2031,6 +2115,7 @@ function PokerRoom({
   onApproveResult,
   onAwardPot,
   onKick,
+  winnerAnnouncement,
 }: PokerRoomProps) {
   const mySeat = profile
     ? seats.find((seat) => seat.user_id === profile.id)
@@ -2177,6 +2262,22 @@ function PokerRoom({
               </small>
             </div>
 
+            {winnerAnnouncement && (
+              <div className="winner-announcement" aria-live="polite">
+                <div className="winner-kicker">Hand #{winnerAnnouncement.handNumber} result</div>
+                <strong>{winnerAnnouncement.primaryBanner}</strong>
+                {winnerAnnouncement.banners.length > 1 && (
+                  <div className="winner-splits">
+                    {winnerAnnouncement.banners.map((banner) => (
+                      <span key={`${winnerAnnouncement.handId}-${banner.userId}-${banner.kind}`}>
+                        {banner.name}: {centsToDollars(banner.amountCents)} · {banner.reason}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="community-zone">
               {activeHand ? (
                 activeHand.summary.boards.map((board) => (
@@ -2236,7 +2337,7 @@ function PokerRoom({
               style={{ left: `${position.x}%`, top: `${position.y}%` }}
               title={position.label}
             >
-              {activeTable?.button_seat === seatNumber && (
+              {(activeHand?.summary.dealerSeat ?? activeTable?.button_seat) === seatNumber && (
                 <span className="dealer-button">D</span>
               )}
               {seat ? (

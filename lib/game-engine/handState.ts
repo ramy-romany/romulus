@@ -56,6 +56,14 @@ export type RomulusHandState = {
     highWinnerIds: string[];
     lowWinnerIds: string[];
     messages: string[];
+    winnerBanners?: Array<{
+      userId: string;
+      name: string;
+      amountCents: number;
+      reason: string;
+      kind: 'high' | 'low' | 'scoop' | 'uncontested' | 'split';
+    }>;
+    primaryBanner?: string;
   };
 };
 

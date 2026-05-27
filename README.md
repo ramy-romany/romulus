@@ -73,3 +73,8 @@ Important: the action tray is a visual/testing layer on top of the current manua
 - Enlarges the logged-in user's cards and community board cards; opponent cards are smaller.
 
 Still next: side pots, full server-side trusted actions, Stud Minnesota replacement-card choice, and deeper split-pot edge cases.
+
+
+## v0.3.4
+
+Adds winner announcement banners on the table after payouts, including who won, why they won, and the amount paid. Also delays auto-next-hand long enough to see the result and rotates the dealer button automatically for the next hand.

@@ -53,12 +53,22 @@ type PlayerResult = {
   low?: LowScore;
 };
 
+export type WinnerBanner = {
+  userId: string;
+  name: string;
+  amountCents: number;
+  reason: string;
+  kind: 'high' | 'low' | 'scoop' | 'uncontested' | 'split';
+};
+
 export type ShowdownResolution = {
   supported: boolean;
   messages: string[];
   payoutsByUserId: Record<string, number>;
   highWinnerIds: string[];
   lowWinnerIds: string[];
+  winnerBanners: WinnerBanner[];
+  primaryBanner: string;
 };
 
 function combinations<T>(items: T[], count: number): T[][] {
@@ -342,6 +352,79 @@ function namesFor(results: PlayerResult[], ids: string[]) {
   return ids.map((id) => resultById(results, id)?.name ?? 'Player').join(' / ');
 }
 
+function titleCaseReason(label: string) {
+  return label
+    .replace(/\b[a-z]/g, (match) => match.toUpperCase())
+    .replace(/-High/g, '-high')
+    .replace(/-Better/g, '-better');
+}
+
+function buildWinnerBanners(args: {
+  results: PlayerResult[];
+  payoutsByUserId: Record<string, number>;
+  highWinnerIds: string[];
+  lowWinnerIds: string[];
+  lowPotExists: boolean;
+}): WinnerBanner[] {
+  const { results, payoutsByUserId, highWinnerIds, lowWinnerIds, lowPotExists } = args;
+  const highSet = new Set(highWinnerIds);
+  const lowSet = new Set(lowWinnerIds);
+  return Object.entries(payoutsByUserId)
+    .filter(([, amount]) => amount > 0)
+    .map(([userId, amountCents]) => {
+      const result = resultById(results, userId);
+      const name = result?.name ?? 'Player';
+      const high = result?.high?.label ? titleCaseReason(result.high.label) : '';
+      const low = result?.low?.label ? titleCaseReason(result.low.label) : '';
+      const wonHigh = highSet.has(userId);
+      const wonLow = lowSet.has(userId);
+      const isSplit = highWinnerIds.length > 1 || lowWinnerIds.length > 1;
+
+      if (wonHigh && wonLow) {
+        return {
+          userId,
+          name,
+          amountCents,
+          kind: 'scoop' as const,
+          reason: high && low ? `scoops with ${high} and ${low}` : 'scoops the pot',
+        };
+      }
+
+      if (wonHigh) {
+        return {
+          userId,
+          name,
+          amountCents,
+          kind: isSplit ? 'split' as const : 'high' as const,
+          reason: high
+            ? `${lowPotExists ? 'wins high' : 'wins'} with ${high}`
+            : `${lowPotExists ? 'wins high' : 'wins'} the pot`,
+        };
+      }
+
+      if (wonLow) {
+        return {
+          userId,
+          name,
+          amountCents,
+          kind: isSplit ? 'split' as const : 'low' as const,
+          reason: low ? `wins low with ${low}` : 'wins low',
+        };
+      }
+
+      return { userId, name, amountCents, kind: 'split' as const, reason: 'wins a share of the pot' };
+    });
+}
+
+function bannerLine(banner: WinnerBanner) {
+  return `${banner.name} WINS ${banner.reason} · ${moneyText(banner.amountCents)}`;
+}
+
+function moneyText(amountCents: number) {
+  const dollars = amountCents / 100;
+  return dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
 export function resolveShowdown(state: RomulusHandState): ShowdownResolution {
   const game = findGame(state.gameId);
   const results = bestPlayerResults(state);
@@ -352,10 +435,10 @@ export function resolveShowdown(state: RomulusHandState): ShowdownResolution {
   const pot = state.potCents ?? 0;
 
   if (pot <= 0) {
-    return { supported: false, messages: ['No pot to award.'], payoutsByUserId, highWinnerIds, lowWinnerIds };
+    return { supported: false, messages: ['No pot to award.'], payoutsByUserId, highWinnerIds, lowWinnerIds, winnerBanners: [], primaryBanner: '' };
   }
   if (!highWinnerIds.length) {
-    return { supported: false, messages: ['Automatic showdown could not score this hand yet. Use manual Award for this hand.'], payoutsByUserId, highWinnerIds, lowWinnerIds };
+    return { supported: false, messages: ['Automatic showdown could not score this hand yet. Use manual Award for this hand.'], payoutsByUserId, highWinnerIds, lowWinnerIds, winnerBanners: [], primaryBanner: '' };
   }
 
   if (game.lowRule && lowWinnerIds.length) {
@@ -382,5 +465,23 @@ export function resolveShowdown(state: RomulusHandState): ShowdownResolution {
     .join(' · ');
   if (cardLine) messages.push(`Winning high cards: ${cardLine}.`);
 
-  return { supported: true, messages, payoutsByUserId, highWinnerIds, lowWinnerIds };
+  const winnerBanners = buildWinnerBanners({
+    results,
+    payoutsByUserId,
+    highWinnerIds,
+    lowWinnerIds,
+    lowPotExists: Boolean(game.lowRule && lowWinnerIds.length > 0),
+  });
+  const primaryBanner = winnerBanners.map(bannerLine).join(' · ');
+  if (primaryBanner) messages.push(primaryBanner);
+
+  return {
+    supported: true,
+    messages,
+    payoutsByUserId,
+    highWinnerIds,
+    lowWinnerIds,
+    winnerBanners,
+    primaryBanner,
+  };
 }
