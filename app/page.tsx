@@ -14,6 +14,7 @@ import {
 } from "@/lib/game-engine/handState";
 import { formatCard, cardColor } from "@/lib/game-engine/cards";
 import { optimizeSettlement } from "@/lib/game-engine/settlement";
+import { newDeck, shuffle } from "@/lib/game-engine/deck";
 import { resolveShowdown } from "@/lib/game-engine/handEvaluator";
 import { centsToDollars, dollarsToCents } from "@/lib/money";
 import { supabase, supabaseReady } from "@/lib/supabaseClient";
@@ -208,6 +209,89 @@ function maxRaiseToFor(args: {
     return Math.min(stackCap, Math.max(potRaiseTo, minRaiseToFor(state)));
   }
   return stackCap;
+}
+
+
+const ACEY_RANK_VALUE: Record<Card['rank'], number> = {
+  '2': 2,
+  '3': 3,
+  '4': 4,
+  '5': 5,
+  '6': 6,
+  '7': 7,
+  '8': 8,
+  '9': 9,
+  T: 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+  A: 14,
+};
+
+function aceyRankValue(card: Card | null | undefined): number {
+  return card ? ACEY_RANK_VALUE[card.rank] : 0;
+}
+
+function shouldRefreshAceyDeck(state: RomulusHandState): boolean {
+  const used = state.aceyDuecy?.cardsUsedThisDeck ?? (52 - (state.deck?.length ?? 52));
+  return used >= Math.ceil(52 * 0.55) || (state.deck?.length ?? 0) < 3;
+}
+
+function drawAceyCard(state: RomulusHandState): Card | null {
+  if (!state.deck?.length) return null;
+  const card = state.deck.shift() ?? null;
+  if (card && state.aceyDuecy) {
+    state.aceyDuecy.cardsUsedThisDeck = (state.aceyDuecy.cardsUsedThisDeck ?? 0) + 1;
+  }
+  return card;
+}
+
+function orderedActiveSeatsFromState(state: RomulusHandState) {
+  return [...(state.players ?? [])]
+    .filter((player) => player.inHand)
+    .sort((a, b) => a.seatNumber - b.seatNumber);
+}
+
+function nextAceyPlayer(state: RomulusHandState) {
+  const players = orderedActiveSeatsFromState(state);
+  if (!players.length) return null;
+  const fromSeat = state.aceyDuecy?.currentPlayerSeat ?? state.dealerSeat ?? 1;
+  return players.find((player) => player.seatNumber > fromSeat) ?? players[0];
+}
+
+function prepareNextAceyTurn(state: RomulusHandState, explicitPlayer = nextAceyPlayer(state)) {
+  if (!state.aceyDuecy) return;
+  if (shouldRefreshAceyDeck(state)) {
+    state.deck = shuffle(newDeck());
+    state.aceyDuecy.deckRefreshes += 1;
+    state.aceyDuecy.cardsUsedThisDeck = 0;
+    state.messages.push('55% of the Acey Deucey deck was used. Fresh deck shuffled.');
+  }
+  const player = explicitPlayer;
+  const leftCard = drawAceyCard(state);
+  const rightCard = drawAceyCard(state);
+  state.aceyDuecy.currentPlayerUserId = player?.userId ?? null;
+  state.aceyDuecy.currentPlayerName = player?.name ?? 'Player';
+  state.aceyDuecy.currentPlayerSeat = player?.seatNumber ?? null;
+  state.aceyDuecy.leftCard = leftCard;
+  state.aceyDuecy.rightCard = rightCard;
+  state.aceyDuecy.middleCard = null;
+  state.aceyDuecy.hasReplaced = false;
+  state.aceyDuecy.mustBetAfterReplace = false;
+  state.aceyDuecy.minBetCents = state.aceyDuecy.passCostCents ?? 500;
+  state.aceyDuecy.turnNumber = (state.aceyDuecy.turnNumber ?? 0) + 1;
+  state.actingUserId = player?.userId ?? null;
+  state.boards = [{ id: 'Acey Deucey', cards: [leftCard, rightCard].filter(Boolean) as Card[] }];
+  if (player && leftCard && rightCard) {
+    state.messages.push(`${player.name} gets ${formatCard(leftCard)} and ${formatCard(rightCard)}.`);
+  }
+}
+
+function aceyBetBounds(state: RomulusHandState) {
+  const acey = state.aceyDuecy;
+  const min = acey?.mustBetAfterReplace ? (acey.replaceMinBetCents ?? 5000) : (acey?.minBetCents ?? 500);
+  const max = Math.max(min, Math.min(state.potCents ?? 0, acey?.maxBetCents ?? 100000));
+  return { min, max };
 }
 
 export default function HomePage() {
@@ -534,6 +618,28 @@ export default function HomePage() {
       (data as PokerTable).id,
       `${profile.display_name} created the table.`,
     );
+  }
+
+
+  function canDeleteTable(table: PokerTable | null | undefined) {
+    return Boolean(profile && table && (profile.is_admin || table.created_by === profile.id));
+  }
+
+  async function deleteTable(table: PokerTable) {
+    if (!profile || !canDeleteTable(table)) {
+      setNotice("Only the table creator or an admin can delete this table.");
+      return;
+    }
+    const confirmed = window.confirm(`Delete table "${table.name}" and all hands, seats, chat, and ledger entries?`);
+    if (!confirmed) return;
+    const { error } = await supabase.from("tables").delete().eq("id", table.id);
+    if (error) {
+      setNotice(`Could not delete table: ${error.message}`);
+      return;
+    }
+    if (activeTableId === table.id) setActiveTableId("");
+    setNotice(`Deleted table ${table.name}.`);
+    await loadTables();
   }
 
   function nextOpenSeat() {
@@ -876,21 +982,41 @@ export default function HomePage() {
 
       if (game.isBombPotDefault) {
         for (const seat of activeSeats) {
-          const posted = Math.min(seat.stack_cents, bombPotCents);
+          const posted = game.id === "acey-deucey" ? bombPotCents : Math.min(seat.stack_cents, bombPotCents);
           state.postedCentsByUserId[seat.user_id] = posted;
           state.streetContribByUserId[seat.user_id] = 0;
           stackUpdates.push({ userId: seat.user_id, amountCents: posted });
           const player = state.players!.find((item) => item.userId === seat.user_id);
-          if (player && seat.stack_cents - posted <= 0) player.allIn = true;
+          if (game.id !== "acey-deucey" && player && seat.stack_cents - posted <= 0) player.allIn = true;
         }
-        if (game.family !== "stud") {
-          state = advanceCommunityStreet(state);
+        if (game.id === "acey-deucey") {
+          const firstAceyPlayer = nextOccupiedSeat(activeSeats, dealer.seat_number) ?? activeSeats[0];
+          if (state.aceyDuecy) {
+            state.aceyDuecy.passCostCents = table.big_blind_cents;
+            state.aceyDuecy.minBetCents = table.big_blind_cents;
+            state.aceyDuecy.currentPlayerUserId = firstAceyPlayer.user_id;
+            state.aceyDuecy.currentPlayerName = displayNameForSeat(firstAceyPlayer);
+            state.aceyDuecy.currentPlayerSeat = firstAceyPlayer.seat_number;
+            state.aceyDuecy.maxBetCents = 100000;
+            state.aceyDuecy.replaceMinBetCents = 5000;
+            state.aceyDuecy.replacePenaltyCents = 10000;
+          }
+          state.actingUserId = firstAceyPlayer.user_id;
+          state.currentBetCents = 0;
+          state.minRaiseCents = table.big_blind_cents;
+          state.actedUserIds = [];
+          state.streetContribByUserId = {};
+          state.messages.push(`${displayNameForSeat(firstAceyPlayer)} is first to act in Acey Deucey.`);
+        } else {
+          if (game.family !== "stud") {
+            state = advanceCommunityStreet(state);
+          }
+          state.currentBetCents = 0;
+          state.minRaiseCents = table.big_blind_cents;
+          state.actedUserIds = [];
+          state.streetContribByUserId = {};
+          state.actingUserId = firstPostflopActor(state);
         }
-        state.currentBetCents = 0;
-        state.minRaiseCents = table.big_blind_cents;
-        state.actedUserIds = [];
-        state.streetContribByUserId = {};
-        state.actingUserId = firstPostflopActor(state);
       } else {
         const smallBlindSeat = nextOccupiedSeat(activeSeats, dealer.seat_number) ?? activeSeats[0];
         const bigBlindSeat =
@@ -941,7 +1067,7 @@ export default function HomePage() {
         const { error: stackError } = await supabase
           .from("table_seats")
           .update({
-            stack_cents: Math.max(0, seat.stack_cents - update.amountCents),
+            stack_cents: game.id === "acey-deucey" ? seat.stack_cents - update.amountCents : Math.max(0, seat.stack_cents - update.amountCents),
           })
           .eq("table_id", activeTableId)
           .eq("user_id", update.userId);
@@ -1327,6 +1453,164 @@ export default function HomePage() {
     await resolveAndSaveGameplayState(state);
   }
 
+
+  async function adjustStackBy(userId: string, deltaCents: number) {
+    if (!activeTableId) return false;
+    const { data, error: loadError } = await supabase
+      .from("table_seats")
+      .select("stack_cents")
+      .eq("table_id", activeTableId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (loadError) {
+      setNotice(loadError.message);
+      return false;
+    }
+    const current = Number((data as { stack_cents?: number } | null)?.stack_cents ?? 0);
+    const { error } = await supabase
+      .from("table_seats")
+      .update({ stack_cents: current + deltaCents })
+      .eq("table_id", activeTableId)
+      .eq("user_id", userId);
+    if (error) {
+      setNotice(error.message);
+      return false;
+    }
+    return true;
+  }
+
+  async function performAceyAction(action: "pass" | "replace" | "bet", betCents?: number) {
+    if (!profile || !activeTableId || !activeTable || !activeHand) return;
+    const state = deepCopyHandState(activeHand.summary);
+    const acey = state.aceyDuecy;
+    if (!acey || state.gameId !== "acey-deucey") {
+      setNotice("Acey Deucey is not the active game.");
+      return;
+    }
+    if (state.actingUserId !== profile.id || acey.currentPlayerUserId !== profile.id) {
+      setNotice("It is not your Acey Deucey turn yet.");
+      return;
+    }
+    const playerName = acey.currentPlayerName || profile.display_name;
+
+    if (action === "pass") {
+      const passCost = acey.passCostCents ?? activeTable.big_blind_cents;
+      const ok = await adjustStackBy(profile.id, -passCost);
+      if (!ok) return;
+      state.potCents += passCost;
+      state.postedCentsByUserId[profile.id] = (state.postedCentsByUserId[profile.id] ?? 0) + passCost;
+      state.messages.push(`${playerName} passed and paid ${centsToDollars(passCost)}.`);
+      acey.lastOutcome = `${playerName} passed for ${centsToDollars(passCost)}.`;
+      prepareNextAceyTurn(state);
+      await updateActiveHand(state);
+      return;
+    }
+
+    if (action === "replace") {
+      if (!acey.leftCard) return;
+      if (shouldRefreshAceyDeck(state)) {
+        state.deck = shuffle(newDeck());
+        acey.deckRefreshes += 1;
+        acey.cardsUsedThisDeck = 0;
+        state.messages.push('55% of the Acey Deucey deck was used. Fresh deck shuffled.');
+      }
+      const newRight = drawAceyCard(state);
+      if (!newRight) return;
+      acey.rightCard = newRight;
+      acey.middleCard = null;
+      acey.hasReplaced = true;
+      acey.mustBetAfterReplace = true;
+      acey.minBetCents = acey.replaceMinBetCents ?? 5000;
+      state.boards = [{ id: 'Acey Deucey', cards: [acey.leftCard, newRight] }];
+      state.messages.push(`${playerName} replaced the second card with ${formatCard(newRight)} and must bet at least ${centsToDollars(acey.minBetCents)}.`);
+      if (newRight.rank === acey.leftCard.rank) {
+        const penalty = acey.replacePenaltyCents ?? 10000;
+        const ok = await adjustStackBy(profile.id, -penalty);
+        if (!ok) return;
+        state.potCents += penalty;
+        state.postedCentsByUserId[profile.id] = (state.postedCentsByUserId[profile.id] ?? 0) + penalty;
+        const outcome = `${playerName} paired the first card on the replacement and was penalized ${centsToDollars(penalty)}.`;
+        state.messages.push(outcome);
+        acey.lastOutcome = outcome;
+        prepareNextAceyTurn(state);
+      }
+      await updateActiveHand(state);
+      return;
+    }
+
+    if (action === "bet") {
+      if (!acey.leftCard || !acey.rightCard) return;
+      const bounds = aceyBetBounds(state);
+      const wager = Math.max(bounds.min, Math.min(bounds.max, betCents ?? bounds.min));
+      if (wager <= 0 || state.potCents <= 0) return;
+      if (shouldRefreshAceyDeck(state)) {
+        state.deck = shuffle(newDeck());
+        acey.deckRefreshes += 1;
+        acey.cardsUsedThisDeck = 0;
+        state.messages.push('55% of the Acey Deucey deck was used. Fresh deck shuffled.');
+      }
+      const middle = drawAceyCard(state);
+      if (!middle) return;
+      acey.middleCard = middle;
+      const leftValue = aceyRankValue(acey.leftCard);
+      const rightValue = aceyRankValue(acey.rightCard);
+      const low = Math.min(leftValue, rightValue);
+      const high = Math.max(leftValue, rightValue);
+      const middleValue = aceyRankValue(middle);
+      state.boards = [{ id: 'Acey Deucey', cards: [acey.leftCard, middle, acey.rightCard] }];
+
+      if (middleValue > low && middleValue < high) {
+        const win = Math.min(wager, state.potCents);
+        const ok = await adjustStackBy(profile.id, win);
+        if (!ok) return;
+        state.potCents -= win;
+        const outcome = `${playerName} bet ${centsToDollars(wager)} and won ${centsToDollars(win)} with ${formatCard(middle)} between ${formatCard(acey.leftCard)} and ${formatCard(acey.rightCard)}.`;
+        state.messages.push(outcome);
+        acey.lastOutcome = outcome;
+        if (state.potCents <= 0) {
+          state.potCents = 0;
+          state.street = "complete";
+          state.gameplayStatus = "complete";
+          state.actingUserId = null;
+          state.resultApplied = true;
+          state.showdownResult = {
+            payoutsByUserId: { [profile.id]: win },
+            highWinnerIds: [profile.id],
+            lowWinnerIds: [],
+            messages: [outcome],
+            primaryBanner: `${playerName} WINS the Acey Deucey pot · ${centsToDollars(win)}`,
+            winnerBanners: [{ userId: profile.id, name: playerName, amountCents: win, reason: 'wins Acey Deucey pot', kind: 'scoop' }],
+          };
+          await updateActiveHand(state, activeTable?.require_result_approval ? "pending" : "approved");
+          if (activeHand?.id) scheduleNextHand(activeHand.id);
+          return;
+        }
+      } else if (middleValue === low || middleValue === high) {
+        const penalty = acey.hasReplaced ? (acey.replacePenaltyCents ?? 10000) : wager * 2;
+        const ok = await adjustStackBy(profile.id, -penalty);
+        if (!ok) return;
+        state.potCents += penalty;
+        state.postedCentsByUserId[profile.id] = (state.postedCentsByUserId[profile.id] ?? 0) + penalty;
+        const outcome = acey.hasReplaced
+          ? `${playerName} paired an outer card with ${formatCard(middle)} after replacing and paid ${centsToDollars(penalty)}.`
+          : `${playerName} hit the post with ${formatCard(middle)} and paid double: ${centsToDollars(penalty)}.`;
+        state.messages.push(outcome);
+        acey.lastOutcome = outcome;
+      } else {
+        const ok = await adjustStackBy(profile.id, -wager);
+        if (!ok) return;
+        state.potCents += wager;
+        state.postedCentsByUserId[profile.id] = (state.postedCentsByUserId[profile.id] ?? 0) + wager;
+        const outcome = `${playerName} missed with ${formatCard(middle)} and paid ${centsToDollars(wager)} into the pot.`;
+        state.messages.push(outcome);
+        acey.lastOutcome = outcome;
+      }
+      acey.mustBetAfterReplace = false;
+      prepareNextAceyTurn(state);
+      await updateActiveHand(state);
+    }
+  }
+
   async function advanceStreet() {
     if (!activeHand) return;
     const state = deepCopyHandState(activeHand.summary);
@@ -1510,6 +1794,28 @@ export default function HomePage() {
     };
   }, [activeHand, profile?.id, mySeat?.stack_cents, selectedGame.betting, activeTable?.paused]);
 
+
+  const aceyControls = useMemo(() => {
+    const acey = activeHand?.summary.aceyDuecy;
+    const bounds = activeHand ? aceyBetBounds(activeHand.summary) : { min: 0, max: 0 };
+    return {
+      isAcey: activeHand?.summary.gameId === "acey-deucey",
+      isMyTurn: Boolean(profile && acey?.currentPlayerUserId === profile.id && activeHand?.summary.actingUserId === profile.id && activeHand?.summary.gameplayStatus === "betting" && !activeTable?.paused),
+      currentPlayerName: acey?.currentPlayerName ?? "",
+      leftCard: acey?.leftCard ?? null,
+      rightCard: acey?.rightCard ?? null,
+      middleCard: acey?.middleCard ?? null,
+      lastOutcome: acey?.lastOutcome ?? "",
+      hasReplaced: Boolean(acey?.hasReplaced),
+      mustBetAfterReplace: Boolean(acey?.mustBetAfterReplace),
+      passCostCents: acey?.passCostCents ?? activeTable?.big_blind_cents ?? 500,
+      minBetCents: bounds.min,
+      maxBetCents: bounds.max,
+      deckRefreshes: acey?.deckRefreshes ?? 0,
+      cardsUsedThisDeck: acey?.cardsUsedThisDeck ?? 0,
+    };
+  }, [activeHand?.id, activeHand?.summary.aceyDuecy, activeHand?.summary.potCents, profile?.id, activeTable?.paused]);
+
   useEffect(() => {
     if (!profile?.is_admin || !activeHand) return;
     const state = activeHand.summary;
@@ -1581,6 +1887,22 @@ export default function HomePage() {
     gameplayControls.maxRaiseToCents,
     activeHand?.id,
     activeHand?.summary.actingUserId,
+  ]);
+
+
+  useEffect(() => {
+    if (!aceyControls.isAcey || !aceyControls.isMyTurn) return;
+    const current = dollarsToCents(manualBetDollars);
+    if (current < aceyControls.minBetCents || current > aceyControls.maxBetCents) {
+      setManualBetDollars(String(Math.round(aceyControls.minBetCents / 100)));
+    }
+  }, [
+    aceyControls.isAcey,
+    aceyControls.isMyTurn,
+    aceyControls.minBetCents,
+    aceyControls.maxBetCents,
+    activeHand?.id,
+    activeHand?.summary.aceyDuecy?.turnNumber,
   ]);
 
   const settlementRows = useMemo(() => {
@@ -1881,9 +2203,16 @@ export default function HomePage() {
                         {table.action_clock_seconds}s
                       </p>
                     </div>
-                    <button onClick={() => setActiveTableId(table.id)}>
-                      Open
-                    </button>
+                    <div className="row">
+                      <button onClick={() => setActiveTableId(table.id)}>
+                        Open
+                      </button>
+                      {canDeleteTable(table) && (
+                        <button className="secondary danger" onClick={() => deleteTable(table)}>
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1901,12 +2230,22 @@ export default function HomePage() {
             <div className="card">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <h2>Table</h2>
-                <button
-                  className="secondary"
-                  onClick={() => setActiveTableId("")}
-                >
-                  Lobby
-                </button>
+                <div className="row">
+                  {activeTable && canDeleteTable(activeTable) && (
+                    <button
+                      className="secondary danger"
+                      onClick={() => deleteTable(activeTable)}
+                    >
+                      Delete Table
+                    </button>
+                  )}
+                  <button
+                    className="secondary"
+                    onClick={() => setActiveTableId("")}
+                  >
+                    Lobby
+                  </button>
+                </div>
               </div>
               <p className="muted">{activeTable?.name}</p>
               <div className="row">
@@ -2174,6 +2513,7 @@ export default function HomePage() {
               manualBetDollars={manualBetDollars}
               setManualBetDollars={setManualBetDollars}
               gameplayControls={gameplayControls}
+              aceyControls={aceyControls}
               onAdvanceStreet={advanceStreet}
               onResolveShowdown={() => {
                 if (activeHand) autoResolveShowdown(deepCopyHandState(activeHand.summary));
@@ -2185,6 +2525,9 @@ export default function HomePage() {
               onFold={() => performAction("fold")}
               onCallOrCheck={() => performAction("check-call")}
               onRaise={(raiseToCents) => performAction("raise", raiseToCents)}
+              onAceyPass={() => performAceyAction("pass")}
+              onAceyReplace={() => performAceyAction("replace")}
+              onAceyBet={(betCents) => performAceyAction("bet", betCents)}
               onShow={() => markShowdown("show")}
               onMuck={() => markShowdown("muck")}
               onPostChips={addManualBet}
@@ -2412,6 +2755,22 @@ type PokerRoomProps = {
     maxRaiseToCents: number;
     canRaise: boolean;
   };
+  aceyControls: {
+    isAcey: boolean;
+    isMyTurn: boolean;
+    currentPlayerName: string;
+    leftCard: Card | null;
+    rightCard: Card | null;
+    middleCard: Card | null;
+    lastOutcome: string;
+    hasReplaced: boolean;
+    mustBetAfterReplace: boolean;
+    passCostCents: number;
+    minBetCents: number;
+    maxBetCents: number;
+    deckRefreshes: number;
+    cardsUsedThisDeck: number;
+  };
   onAdvanceStreet: () => void;
   onResolveShowdown: () => void;
   onStartClock: () => void;
@@ -2419,6 +2778,9 @@ type PokerRoomProps = {
   onFold: () => void;
   onCallOrCheck: () => void;
   onRaise: (raiseToCents: number) => void;
+  onAceyPass: () => void;
+  onAceyReplace: () => void;
+  onAceyBet: (betCents: number) => void;
   onShow: () => void;
   onMuck: () => void;
   onPostChips: () => void;
@@ -2447,6 +2809,7 @@ function PokerRoom({
   manualBetDollars,
   setManualBetDollars,
   gameplayControls,
+  aceyControls,
   onAdvanceStreet,
   onResolveShowdown,
   onStartClock,
@@ -2454,6 +2817,9 @@ function PokerRoom({
   onFold,
   onCallOrCheck,
   onRaise,
+  onAceyPass,
+  onAceyReplace,
+  onAceyBet,
   onShow,
   onMuck,
   onPostChips,
@@ -2487,6 +2853,11 @@ function PokerRoom({
     ),
   );
   const raiseTargetDollars = centsToDollars(raiseTargetCents);
+  const aceyBetTargetCents = Math.min(
+    aceyControls.maxBetCents || 0,
+    Math.max(aceyControls.minBetCents || 0, dollarsToCents(manualBetDollars || "0")),
+  );
+  const aceyBetTargetDollars = centsToDollars(aceyBetTargetCents);
   const boardCount = activeHand?.summary.boards.length ?? 0;
   const tableClass = `poker-room room-${roomTheme} felt-${feltTheme} boards-${boardCount} ${boardCount >= 2 ? "multi-board" : "single-board"}`;
   const pointerStart = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -2898,91 +3269,159 @@ function PokerRoom({
         </div>
 
         <div className="turn-action-panel">
-          <div className={`turn-banner ${gameplayControls.isMyTurn ? "your-turn" : ""}`}>
-            {gameplayControls.isMyTurn
-              ? "Your action"
-              : gameplayControls.actingName
-                ? `Waiting on ${gameplayControls.actingName}`
-                : activeHand
-                  ? "Hand running"
-                  : "Start a hand"}
-          </div>
-          <div className="three-button-actions">
-            <button
-              className="action-main fold-button"
-              onClick={onFold}
-              disabled={!gameplayControls.isMyTurn}
-            >
-              Fold
-            </button>
-            <button
-              className="action-main call-button"
-              onClick={onCallOrCheck}
-              disabled={!gameplayControls.isMyTurn}
-            >
-              {gameplayControls.canCheck
-                ? "Check"
-                : `Call ${centsToDollars(gameplayControls.callCents)}`}
-            </button>
-            <button
-              className="action-main raise-button"
-              onClick={() => onRaise(raiseTargetCents)}
-              disabled={!gameplayControls.isMyTurn || !gameplayControls.canRaise}
-            >
-              {activeHand?.summary.currentBetCents ? "Raise to" : "Bet"} {raiseTargetDollars}
-            </button>
-          </div>
-          <div className="raise-slider-box">
-            <div className="slider-label-row">
-              <span>Min {centsToDollars(gameplayControls.minRaiseToCents)}</span>
-              <span>Max {centsToDollars(gameplayControls.maxRaiseToCents)}</span>
-            </div>
-            <input
-              type="range"
-              min={gameplayControls.minRaiseToCents || 0}
-              max={Math.max(
-                gameplayControls.minRaiseToCents || 0,
-                gameplayControls.maxRaiseToCents || 0,
-              )}
-              step={100}
-              value={raiseTargetCents || 0}
-              onChange={(event) =>
-                setManualBetDollars(String(Math.round(Number(event.target.value) / 100)))
-              }
-              disabled={!gameplayControls.canRaise}
-            />
-            <div className="quick-bets portrait-quick-bets">
-              <button
-                className="mini secondary"
-                onClick={() => setManualBetDollars(String(Math.round((activeTable?.big_blind_cents ?? 500) / 100)))}
-              >
-                BB
-              </button>
-              <button
-                className="mini secondary"
-                onClick={() => setManualBetDollars(potAmountForButton)}
-              >
-                Pot
-              </button>
-              <button
-                className="mini secondary"
-                onClick={onAdvanceStreet}
-                disabled={!activeHand || activeHand.summary.street === "complete"}
-              >
-                Deal
-              </button>
-              {profile?.is_admin && activeHand && activeHand.summary.potCents > 0 && (
-                <button className="mini" onClick={onResolveShowdown}>
-                  Resolve
+          {aceyControls.isAcey ? (
+            <>
+              <div className={`turn-banner ${aceyControls.isMyTurn ? "your-turn" : ""}`}>
+                {aceyControls.isMyTurn
+                  ? "Your Acey Deucey action"
+                  : aceyControls.currentPlayerName
+                    ? `Waiting on ${aceyControls.currentPlayerName}`
+                    : "Acey Deucey running"}
+              </div>
+              <div className="acey-status-card">
+                <strong>{aceyControls.currentPlayerName || "Player"}</strong>
+                <span>
+                  {aceyControls.leftCard && aceyControls.rightCard
+                    ? `${formatCard(aceyControls.leftCard)} / ${aceyControls.middleCard ? `${formatCard(aceyControls.middleCard)} / ` : ""}${formatCard(aceyControls.rightCard)}`
+                    : "Waiting for cards"}
+                </span>
+                {aceyControls.mustBetAfterReplace && <b>Replacement used · minimum bet is $50</b>}
+                {aceyControls.lastOutcome && <small>{aceyControls.lastOutcome}</small>}
+              </div>
+              <div className="three-button-actions acey-actions">
+                <button
+                  className="action-main fold-button"
+                  onClick={onAceyPass}
+                  disabled={!aceyControls.isMyTurn || aceyControls.mustBetAfterReplace}
+                >
+                  Pass {centsToDollars(aceyControls.passCostCents)}
                 </button>
-              )}
-              {profile?.is_admin && activeTable?.require_result_approval && (
-                <button className="mini" onClick={onApproveResult}>
-                  Approve
+                <button
+                  className="action-main call-button"
+                  onClick={onAceyReplace}
+                  disabled={!aceyControls.isMyTurn || aceyControls.hasReplaced}
+                >
+                  Replace 2nd
                 </button>
-              )}
-            </div>
-          </div>
+                <button
+                  className="action-main raise-button"
+                  onClick={() => onAceyBet(aceyBetTargetCents)}
+                  disabled={!aceyControls.isMyTurn || aceyControls.maxBetCents <= 0}
+                >
+                  Bet {aceyBetTargetDollars}
+                </button>
+              </div>
+              <div className="raise-slider-box">
+                <div className="slider-label-row">
+                  <span>Min {centsToDollars(aceyControls.minBetCents)}</span>
+                  <span>Max {centsToDollars(aceyControls.maxBetCents)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={aceyControls.minBetCents || 0}
+                  max={Math.max(aceyControls.minBetCents || 0, aceyControls.maxBetCents || 0)}
+                  step={500}
+                  value={aceyBetTargetCents || 0}
+                  onChange={(event) => setManualBetDollars(String(Math.round(Number(event.target.value) / 100)))}
+                  disabled={!aceyControls.isMyTurn}
+                />
+                <div className="quick-bets portrait-quick-bets">
+                  <button className="mini secondary" onClick={() => setManualBetDollars("50")}>$50</button>
+                  <button className="mini secondary" onClick={() => setManualBetDollars("100")}>$100</button>
+                  <button className="mini secondary" onClick={() => setManualBetDollars(String(Math.round(aceyControls.maxBetCents / 100)))}>Max</button>
+                  <span className="mini ghost">Deck used {Math.round((aceyControls.cardsUsedThisDeck / 52) * 100)}%</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={`turn-banner ${gameplayControls.isMyTurn ? "your-turn" : ""}`}>
+                {gameplayControls.isMyTurn
+                  ? "Your action"
+                  : gameplayControls.actingName
+                    ? `Waiting on ${gameplayControls.actingName}`
+                    : activeHand
+                      ? "Hand running"
+                      : "Start a hand"}
+              </div>
+              <div className="three-button-actions">
+                <button
+                  className="action-main fold-button"
+                  onClick={onFold}
+                  disabled={!gameplayControls.isMyTurn}
+                >
+                  Fold
+                </button>
+                <button
+                  className="action-main call-button"
+                  onClick={onCallOrCheck}
+                  disabled={!gameplayControls.isMyTurn}
+                >
+                  {gameplayControls.canCheck
+                    ? "Check"
+                    : `Call ${centsToDollars(gameplayControls.callCents)}`}
+                </button>
+                <button
+                  className="action-main raise-button"
+                  onClick={() => onRaise(raiseTargetCents)}
+                  disabled={!gameplayControls.isMyTurn || !gameplayControls.canRaise}
+                >
+                  {activeHand?.summary.currentBetCents ? "Raise to" : "Bet"} {raiseTargetDollars}
+                </button>
+              </div>
+              <div className="raise-slider-box">
+                <div className="slider-label-row">
+                  <span>Min {centsToDollars(gameplayControls.minRaiseToCents)}</span>
+                  <span>Max {centsToDollars(gameplayControls.maxRaiseToCents)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={gameplayControls.minRaiseToCents || 0}
+                  max={Math.max(
+                    gameplayControls.minRaiseToCents || 0,
+                    gameplayControls.maxRaiseToCents || 0,
+                  )}
+                  step={100}
+                  value={raiseTargetCents || 0}
+                  onChange={(event) =>
+                    setManualBetDollars(String(Math.round(Number(event.target.value) / 100)))
+                  }
+                  disabled={!gameplayControls.canRaise}
+                />
+                <div className="quick-bets portrait-quick-bets">
+                  <button
+                    className="mini secondary"
+                    onClick={() => setManualBetDollars(String(Math.round((activeTable?.big_blind_cents ?? 500) / 100)))}
+                  >
+                    BB
+                  </button>
+                  <button
+                    className="mini secondary"
+                    onClick={() => setManualBetDollars(potAmountForButton)}
+                  >
+                    Pot
+                  </button>
+                  <button
+                    className="mini secondary"
+                    onClick={onAdvanceStreet}
+                    disabled={!activeHand || activeHand.summary.street === "complete"}
+                  >
+                    Deal
+                  </button>
+                  {profile?.is_admin && activeHand && activeHand.summary.potCents > 0 && (
+                    <button className="mini" onClick={onResolveShowdown}>
+                      Resolve
+                    </button>
+                  )}
+                  {profile?.is_admin && activeTable?.require_result_approval && (
+                    <button className="mini" onClick={onApproveResult}>
+                      Approve
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

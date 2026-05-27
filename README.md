@@ -102,3 +102,16 @@ Mobile UI cleanup: account/password panel exposed in the top bar, pot badge move
 - Moves the winner banner into a top-level overlay so player pods no longer cover it.
 
 Run the updated `supabase/schema.sql` once so existing tables get `game_selection_mode` and `random_game_ids`.
+
+## v0.3.8 notes
+
+- Table creators can delete their own tables; admins can delete any table.
+- Added Acey Deucey as a dealer-choice/random-eligible game.
+- Acey Deucey MVP rules implemented:
+  - Every player donates 5x big blind into the pot.
+  - Acting player may pass for one big blind, replace the second card, or bet.
+  - Bet max is pot size capped at $1,000.
+  - Replacement forces a $50 minimum bet.
+  - Pairing the first card on replacement costs $100.
+  - Hitting an outside post after replacement costs $100; hitting a post without replacement costs double the bet.
+  - Deck refreshes after 55% of the deck has been used.

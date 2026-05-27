@@ -21,7 +21,7 @@ create table if not exists tables (
   require_result_approval boolean not null default true,
   current_game_id text not null default 'nlh',
   game_selection_mode text not null default 'dealer-choice' check (game_selection_mode in ('dealer-choice','random')),
-  random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota'],
+  random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota','acey-deucey'],
   button_seat integer not null default 1,
   paused boolean not null default false,
   status text not null default 'open',
@@ -33,9 +33,13 @@ alter table tables add column if not exists bomb_pot_cents integer not null defa
 alter table tables add column if not exists action_deadline timestamptz;
 alter table tables add column if not exists current_game_id text not null default 'nlh';
 alter table tables add column if not exists game_selection_mode text not null default 'dealer-choice';
-alter table tables add column if not exists random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota'];
+alter table tables add column if not exists random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota','acey-deucey'];
 alter table tables add column if not exists button_seat integer not null default 1;
 alter table tables add column if not exists paused boolean not null default false;
+
+update tables
+set random_game_ids = array_append(random_game_ids, 'acey-deucey')
+where not ('acey-deucey' = any(random_game_ids));
 
 create table if not exists table_seats (
   table_id uuid references tables(id) on delete cascade,
@@ -91,6 +95,7 @@ drop policy if exists "own profile update" on profiles;
 drop policy if exists "authenticated read tables" on tables;
 drop policy if exists "authenticated insert tables" on tables;
 drop policy if exists "authenticated update tables" on tables;
+drop policy if exists "creator or admin delete tables" on tables;
 drop policy if exists "authenticated read seats" on table_seats;
 drop policy if exists "authenticated insert seats" on table_seats;
 drop policy if exists "authenticated update seats" on table_seats;
@@ -111,6 +116,11 @@ create policy "own profile update" on profiles for update to authenticated using
 create policy "authenticated read tables" on tables for select to authenticated using (true);
 create policy "authenticated insert tables" on tables for insert to authenticated with check (auth.uid() = created_by);
 create policy "authenticated update tables" on tables for update to authenticated using (true) with check (true);
+create policy "creator or admin delete tables" on tables for delete to authenticated
+using (
+  auth.uid() = created_by
+  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+);
 
 create policy "authenticated read seats" on table_seats for select to authenticated using (true);
 create policy "authenticated insert seats" on table_seats for insert to authenticated with check (auth.uid() = user_id);
