@@ -112,6 +112,21 @@ function usernameToEmail(username: string) {
   return `${trimmed}@romulus.local`;
 }
 
+function lastGameChoiceKey(profile: Profile | null) {
+  if (!profile) return "";
+  return `romulus:lastGameChoice:${profile.username || profile.id}`;
+}
+
+function safeLocalStorageGet(key: string) {
+  if (!key || typeof window === "undefined") return "";
+  try { return window.localStorage.getItem(key) ?? ""; } catch { return ""; }
+}
+
+function safeLocalStorageSet(key: string, value: string) {
+  if (!key || typeof window === "undefined") return;
+  try { window.localStorage.setItem(key, value); } catch {}
+}
+
 
 function deepCopyHandState(state: RomulusHandState): RomulusHandState {
   return JSON.parse(JSON.stringify(state)) as RomulusHandState;
@@ -169,6 +184,7 @@ function ensureGameplayState(state: RomulusHandState) {
   state.streetContribByUserId = state.streetContribByUserId ?? {};
   state.postedCentsByUserId = state.postedCentsByUserId ?? {};
   state.players = state.players ?? [];
+  state.actionLabelsByUserId = state.actionLabelsByUserId ?? {};
   state.gameplayStatus = state.gameplayStatus ?? "betting";
 }
 
@@ -375,6 +391,10 @@ export default function HomePage() {
   const autoNextHandKeyRef = useRef("");
   const actionTimeoutKeyRef = useRef("");
 
+  useEffect(() => {
+    setLastGameChoiceId(safeLocalStorageGet(lastGameChoiceKey(profile)));
+  }, [profile?.id, profile?.username]);
+
   const [tables, setTables] = useState<PokerTable[]>([]);
   const [activeTableId, setActiveTableId] = useState<string>("");
   const [activeTable, setActiveTable] = useState<PokerTable | null>(null);
@@ -388,6 +408,7 @@ export default function HomePage() {
   const [buyInDollars, setBuyInDollars] = useState("500");
   const [cashOutDollars, setCashOutDollars] = useState("0");
   const [manualBetDollars, setManualBetDollars] = useState("25");
+  const [lastGameChoiceId, setLastGameChoiceId] = useState("");
   const [clockTick, setClockTick] = useState(Date.now());
   const [notice, setNotice] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState("connecting");
@@ -920,6 +941,8 @@ export default function HomePage() {
       return;
     }
     const game = findGame(gameId);
+    safeLocalStorageSet(lastGameChoiceKey(profile), game.id);
+    setLastGameChoiceId(game.id);
     await updateTablePatch({ current_game_id: game.id });
     if (activeTableId && profile)
       await postSystemMessage(
@@ -970,6 +993,8 @@ export default function HomePage() {
 
   async function chooseGameAndStart(gameId: string) {
     const game = findGame(gameId);
+    safeLocalStorageSet(lastGameChoiceKey(profile), game.id);
+    setLastGameChoiceId(game.id);
     await updateTablePatch({ current_game_id: game.id });
     if (activeTableId && profile) {
       await postSystemMessage(activeTableId, `${profile.display_name} chose ${game.displayName}.`);
@@ -1060,13 +1085,22 @@ export default function HomePage() {
         return;
       }
 
-      let gameId = options?.gameIdOverride || table.current_game_id || "nlh";
       const disabledGameIdsForTable = table.disabled_game_ids ?? [];
       const playableForSeatCount = GAME_CATALOG.filter(
         (gameOption) => !disabledGameIdsForTable.includes(gameOption.id) && playableWith(gameOption, activeSeats.length),
       );
-      if (disabledGameIdsForTable.includes(gameId) || !playableWith(findGame(gameId), activeSeats.length)) {
+      const lastChoiceForUser = safeLocalStorageGet(lastGameChoiceKey(profile));
+      let gameId = options?.gameIdOverride || table.current_game_id || "";
+      if (!options?.gameIdOverride && table.game_selection_mode !== "random") {
+        const lastPlayable = playableForSeatCount.find((gameOption) => gameOption.id === lastChoiceForUser);
+        if (lastPlayable) gameId = lastPlayable.id;
+      }
+      if (!gameId || disabledGameIdsForTable.includes(gameId) || !playableWith(findGame(gameId), activeSeats.length)) {
         gameId = playableForSeatCount[0]?.id ?? "nlh";
+      }
+      if (gameId) {
+        safeLocalStorageSet(lastGameChoiceKey(profile), gameId);
+        setLastGameChoiceId(gameId);
       }
       if (table.game_selection_mode === "random" && !options?.gameIdOverride) {
         const randomIds = table.random_game_ids?.length
@@ -1114,6 +1148,7 @@ export default function HomePage() {
       state.currentBetCents = 0;
       state.actedUserIds = [];
       state.streetContribByUserId = {};
+      state.actionLabelsByUserId = {};
       state.gameplayStatus = "betting";
       state.resultApplied = false;
       state.players = activeSeats.map((seat) => ({
@@ -1338,6 +1373,7 @@ export default function HomePage() {
     next.minRaiseCents = state.bigBlindCents ?? activeTable?.big_blind_cents ?? 500;
     next.streetContribByUserId = {};
     next.actedUserIds = [];
+    next.actionLabelsByUserId = {};
     next.gameplayStatus = "betting";
 
     if (game.family === "stud") {
@@ -1549,6 +1585,7 @@ export default function HomePage() {
       player.folded = true;
       player.inHand = false;
       state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), profile.id])];
+      state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [profile.id]: "Fold" };
       state.messages.push(`${player.name} folded.`);
       await resolveAndSaveGameplayState(state);
       return;
@@ -1612,14 +1649,18 @@ export default function HomePage() {
       );
       state.actedUserIds = [profile.id];
       const wasOpeningBet = oldBet <= 0;
+      const actionLabel = `${wasOpeningBet ? "Bet" : "Raise"} ${centsToDollars(state.currentBetCents)}`;
+      state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [profile.id]: actionLabel };
       state.messages.push(
         `${player.name} ${wasOpeningBet ? "bet" : "raised to"} ${centsToDollars(state.currentBetCents)}.`,
       );
     } else {
       state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), profile.id])];
       if (callCents > 0) {
+        state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [profile.id]: `Call ${centsToDollars(callCents)}` };
         state.messages.push(`${player.name} called ${centsToDollars(callCents)}.`);
       } else {
+        state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [profile.id]: "Check" };
         state.messages.push(`${player.name} checked.`);
       }
     }
@@ -1959,9 +2000,11 @@ export default function HomePage() {
       actor.folded = true;
       actor.inHand = false;
       state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), actor.userId])];
+      state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [actor.userId]: "Fold" };
       state.messages.push(`${actor.name} timed out and folded.`);
     } else {
       state.actedUserIds = [...new Set([...(state.actedUserIds ?? []), actor.userId])];
+      state.actionLabelsByUserId = { ...(state.actionLabelsByUserId ?? {}), [actor.userId]: "Check" };
       state.messages.push(`${actor.name} timed out and checked.`);
     }
     await resolveAndSaveGameplayState(state);
@@ -1985,6 +2028,11 @@ export default function HomePage() {
   const playableGames = activeGames.filter((game) =>
     playableWith(game, seatedPlayers.length || 1),
   );
+  const preferredGame =
+    playableGames.find((game) => game.id === lastGameChoiceId) ??
+    playableGames.find((game) => game.id === selectedGame.id) ??
+    playableGames[0] ??
+    selectedGame;
   const handIsComplete = activeHand?.summary.gameplayStatus === "complete" || activeHand?.summary.street === "complete";
   const canChooseNextDealerGame = Boolean(
     gameSelectionMode === "dealer-choice" &&
@@ -2325,10 +2373,7 @@ export default function HomePage() {
             onReset={resetPublicSettlementTool}
           />
         )}
-        <section
-          className="grid"
-          style={{ gridTemplateColumns: "minmax(280px, 420px) 1fr" }}
-        >
+        <section className="grid login-grid">
           <div className="card">
             <h2>Sign in</h2>
             <label>
@@ -2442,7 +2487,7 @@ export default function HomePage() {
       )}
 
       {!activeTableId ? (
-        <section className="grid" style={{ gridTemplateColumns: "350px 1fr" }}>
+        <section className="grid lobby-grid">
           <div className="card">
             <h2>Create table</h2>
             <label>
@@ -2771,7 +2816,8 @@ export default function HomePage() {
               activeTable={activeTable}
               activeHand={activeHand}
               seats={seats}
-              selectedGameName={selectedGame.displayName}
+              selectedGameName={activeHand ? findGame(activeHand.summary.gameId).displayName : preferredGame.displayName}
+              preferredGameId={preferredGame.id}
               playableGames={playableGames}
               gameSelectionMode={gameSelectionMode}
               canChooseNextDealerGame={canChooseNextDealerGame}
@@ -3072,6 +3118,7 @@ type PokerRoomProps = {
   activeHand: Hand | null;
   seats: Seat[];
   selectedGameName: string;
+  preferredGameId: string;
   playableGames: typeof GAME_CATALOG;
   gameSelectionMode: "dealer-choice" | "random";
   canChooseNextDealerGame: boolean;
@@ -3155,6 +3202,7 @@ function PokerRoom({
   activeHand,
   seats,
   selectedGameName,
+  preferredGameId,
   playableGames,
   gameSelectionMode,
   canChooseNextDealerGame,
@@ -3237,6 +3285,7 @@ function PokerRoom({
   const pointerStart = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTapTime = useRef(0);
   const [dealTick, setDealTick] = useState(Date.now());
+  const [showGameChooser, setShowGameChooser] = useState(false);
 
   useEffect(() => {
     if (!activeHand) return;
@@ -3464,15 +3513,9 @@ function PokerRoom({
                   <strong>Choose a game and start a hand</strong>
                   <span>Cards, boards, pot, and action will live here.</span>
                   <div className="no-hand-actions">
-                    <button onClick={onStartHand}>Start {selectedGameName}</button>
-                    {gameSelectionMode === "dealer-choice" && playableGames.length > 0 && (
-                      <div className="mini-game-picks">
-                        {playableGames.slice(0, 6).map((game) => (
-                          <button key={game.id} className="secondary" onClick={() => onChooseGameAndStart(game.id)}>
-                            {game.displayName}
-                          </button>
-                        ))}
-                      </div>
+                    <button onClick={() => onChooseGameAndStart(preferredGameId)}>Start {selectedGameName}</button>
+                    {gameSelectionMode === "dealer-choice" && playableGames.length > 1 && (
+                      <button className="secondary" onClick={() => setShowGameChooser(true)}>Choose different game</button>
                     )}
                   </div>
                 </div>
@@ -3512,6 +3555,9 @@ function PokerRoom({
           );
           const currentBet =
             activeHand?.summary.postedCentsByUserId?.[seat?.user_id ?? ""] ?? 0;
+          const playerState = activeHand?.summary.players?.find((player) => player.userId === seat?.user_id);
+          const isFolded = Boolean(playerState?.folded || playerState?.inHand === false);
+          const actionLabel = activeHand?.summary.actionLabelsByUserId?.[seat?.user_id ?? ""];
           const isActing = Boolean(seat && activeHand?.summary.actingUserId === seat.user_id);
           const totalClockSeconds = Math.max(1, activeTable?.action_clock_seconds ?? 30);
           const clockProgressPercent = isActing && secondsLeft !== null
@@ -3524,7 +3570,7 @@ function PokerRoom({
           } as CSSProperties;
           return (
             <div
-              className={`table-seat-pod ${isMe ? "is-me" : ""} ${isActing ? "is-acting has-shot-clock" : ""} ${isActing && secondsLeft !== null && secondsLeft <= 5 ? "clock-warning" : ""} ${!seat ? "is-empty" : ""}`}
+              className={`table-seat-pod ${isMe ? "is-me" : ""} ${isFolded ? "is-folded" : ""} ${isActing ? "is-acting has-shot-clock" : ""} ${isActing && secondsLeft !== null && secondsLeft <= 5 ? "clock-warning" : ""} ${!seat ? "is-empty" : ""}`}
               key={seatNumber}
               style={seatStyle}
               title={position.label}
@@ -3553,26 +3599,31 @@ function PokerRoom({
                   <div className="seat-stack">
                     {centsToDollars(seat.stack_cents)}{!seat.is_active ? " · sitting out" : ""}
                   </div>
+                  {actionLabel && (
+                    <div className={`seat-action-label ${isFolded ? "folded-action" : ""}`}>
+                      {actionLabel}
+                    </div>
+                  )}
                   {currentBet > 0 && (
                     <div className="seat-bet">
                       Bet {centsToDollars(currentBet)}
                     </div>
                   )}
-                  {visibleCards.length > 0 && (
+                  {!isFolded && visibleCards.length > 0 && (
                     <CardRow
                       cards={visibleCards}
                       label="Up"
                       deckMode={deckMode}
                     />
                   )}
-                  {visuallyDealtHoleCards.length > 0 && canSeeHole && !isMe && (
+                  {!isFolded && visuallyDealtHoleCards.length > 0 && canSeeHole && !isMe && (
                     <CardRow
                       cards={visuallyDealtHoleCards}
                       label={isMe ? undefined : isShowdownRevealed ? "Showdown" : "Shown"}
                       deckMode={deckMode}
                     />
                   )}
-                  {visibleHoleCount > 0 && !canSeeHole && !isMe && (
+                  {!isFolded && visibleHoleCount > 0 && !canSeeHole && !isMe && (
                     <CardBacks
                       count={isMe ? Math.min(visibleHoleCount, 6) : Math.min(visibleHoleCount, 2)}
                       color={cardBackTheme}
@@ -3609,6 +3660,34 @@ function PokerRoom({
           );
         })}
 
+        {showGameChooser && (
+          <div className="game-chooser-layer">
+            <div className="game-chooser-card">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div>
+                  <h2>Choose Game</h2>
+                  <p className="muted">Pick the next dealer-choice game. Your last choice is the default next time.</p>
+                </div>
+                <button className="secondary" onClick={() => setShowGameChooser(false)}>Back to Table</button>
+              </div>
+              <div className="game-chooser-list">
+                {playableGames.map((game) => (
+                  <button
+                    key={game.id}
+                    className={game.id === preferredGameId ? "selected-game-choice" : "secondary"}
+                    onClick={() => {
+                      setShowGameChooser(false);
+                      onChooseGameAndStart(game.id);
+                    }}
+                  >
+                    {game.displayName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {winnerAnnouncement && (
           <div className="winner-layer" aria-live="polite">
             <div className="winner-announcement">
@@ -3642,11 +3721,8 @@ function PokerRoom({
             </div>
             {canChooseNextDealerGame ? (
               <div className="dealer-choice-buttons">
-                {playableGames.map((game) => (
-                  <button key={game.id} className="secondary" onClick={() => onChooseGameAndStart(game.id)}>
-                    {game.displayName}
-                  </button>
-                ))}
+                <button onClick={() => onChooseGameAndStart(preferredGameId)}>Start {selectedGameName}</button>
+                <button className="secondary" onClick={() => setShowGameChooser(true)}>Choose Different Game</button>
               </div>
             ) : (
               <p className="muted">Waiting for the dealer to choose.</p>
@@ -3655,6 +3731,7 @@ function PokerRoom({
         )}
       </div>
 
+      {activeHand && (
       <div className="hero-action-tray iphone-action-tray">
         <div
           className="my-hand-panel gesture-zone"
@@ -3860,6 +3937,9 @@ Your hand · sorted A→2 / ♠→♣
           )}
         </div>
       </div>
+
+      </div>
+      )}
 
       {activeHand && (
         <div className="hand-log-strip">
