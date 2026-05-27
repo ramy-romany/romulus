@@ -20,6 +20,8 @@ create table if not exists tables (
   action_deadline timestamptz,
   require_result_approval boolean not null default true,
   current_game_id text not null default 'nlh',
+  game_selection_mode text not null default 'dealer-choice' check (game_selection_mode in ('dealer-choice','random')),
+  random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota'],
   button_seat integer not null default 1,
   paused boolean not null default false,
   status text not null default 'open',
@@ -30,6 +32,8 @@ create table if not exists tables (
 alter table tables add column if not exists bomb_pot_cents integer not null default 2500;
 alter table tables add column if not exists action_deadline timestamptz;
 alter table tables add column if not exists current_game_id text not null default 'nlh';
+alter table tables add column if not exists game_selection_mode text not null default 'dealer-choice';
+alter table tables add column if not exists random_game_ids text[] not null default array['nlh','plo-4','plo-5','plo-6','plo-hilo-4','plo-hilo-5','plo-hilo-6','pastrami-4','pastrami-5','pastrami-6','costarica-4','costarica-5','costarica-6','get-fucked-4','get-fucked-5','get-fucked-6','stud-7','stud-minnesota'];
 alter table tables add column if not exists button_seat integer not null default 1;
 alter table tables add column if not exists paused boolean not null default false;
 

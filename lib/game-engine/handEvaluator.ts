@@ -417,7 +417,7 @@ function buildWinnerBanners(args: {
 }
 
 function bannerLine(banner: WinnerBanner) {
-  return `${banner.name} WINS ${banner.reason} · ${moneyText(banner.amountCents)}`;
+  return `${banner.name} ${banner.reason} · ${moneyText(banner.amountCents)}`;
 }
 
 function moneyText(amountCents: number) {

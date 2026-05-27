@@ -674,3 +674,170 @@ input[type="range"] { padding:0; accent-color:#e8c66d; height:34px; }
   button.mini { padding: 5px 7px; font-size: 10px; }
   .hand-log-strip { display: none; }
 }
+
+/* Romulus v0.3.7 game-mode, overlay, icon, and iPhone table polish */
+.random-game-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(0,0,0,.16);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.game-name-banner {
+  position: absolute;
+  top: 12.5%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: 78%;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: rgba(232,198,109,.92);
+  color: #110d05;
+  border: 1px solid rgba(255,255,255,.45);
+  box-shadow: 0 8px 22px rgba(0,0,0,.28);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: 11px;
+  font-weight: 1000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.winner-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  pointer-events: none;
+  background: radial-gradient(circle at center, rgba(0,0,0,.18), transparent 55%);
+}
+.winner-layer .winner-announcement {
+  position: relative;
+  inset: auto;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: min(88%, 620px);
+  max-height: min(64vh, 440px);
+  overflow: auto;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+}
+.winner-layer .winner-announcement strong {
+  font-size: clamp(18px, 3vw, 28px);
+}
+.dealer-choice-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  z-index: 42;
+  width: min(92%, 720px);
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(5,7,8,.88);
+  border: 1px solid rgba(232,198,109,.32);
+  box-shadow: 0 16px 50px rgba(0,0,0,.42);
+  backdrop-filter: blur(12px);
+}
+.dealer-choice-overlay > div:first-child {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: center;
+  text-align: center;
+}
+.dealer-choice-overlay strong {
+  color: #f9df91;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: 12px;
+}
+.dealer-choice-overlay span { color: rgba(244,241,232,.72); font-size: 12px; }
+.dealer-choice-buttons {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+.dealer-choice-buttons button {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.room-actions .secondary { white-space: nowrap; }
+@media (max-width: 760px) {
+  .poker-room {
+    padding-top: max(54px, calc(env(safe-area-inset-top) + 18px));
+  }
+  .room-title { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room-subtitle { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room-actions button { padding: 6px 7px; font-size: 11px; }
+  .poker-stage { min-height: calc(100dvh - 276px); }
+  .game-name-banner {
+    top: 10.5%;
+    max-width: 74%;
+    font-size: 9px;
+    padding: 4px 9px;
+    letter-spacing: .09em;
+  }
+  .pot-badge {
+    top: 1.25%;
+    left: 50%;
+    max-width: 76%;
+  }
+  .multi-board .community-zone { transform: translateY(12px); }
+  .table-seat-pod { z-index: 12; }
+  .table-seat-pod.is-me { top: 84% !important; }
+  .winner-layer {
+    z-index: 80;
+    padding: 10px 8px;
+    align-items: start;
+    padding-top: 95px;
+  }
+  .winner-layer .winner-announcement {
+    width: 94%;
+    max-height: 42vh;
+    padding: 11px 12px;
+    border-radius: 17px;
+  }
+  .winner-layer .winner-announcement strong {
+    font-size: 18px;
+    line-height: 1.12;
+  }
+  .winner-details { font-size: 10px; }
+  .winner-splits span { font-size: 10px; padding: 4px 7px; }
+  .dealer-choice-overlay {
+    bottom: 4px;
+    width: 94%;
+    padding: 8px;
+    gap: 6px;
+  }
+  .dealer-choice-overlay > div:first-child {
+    display: grid;
+    gap: 2px;
+  }
+  .dealer-choice-buttons button { font-size: 11px; padding: 7px 9px; }
+  .hero-card-row .card-face.hero-card {
+    min-width: 40px;
+    height: 57px;
+    border-radius: 9px;
+    font-size: 16px;
+  }
+  .my-hand-panel small { display: none; }
+  .hand-tools button { min-width: 58px; }
+  .turn-banner { font-size: 10px; padding: 5px 7px; }
+  .three-button-actions { grid-template-columns: .86fr 1fr 1fr; gap: 6px; }
+  .action-main { min-height: 48px; font-size: 14px; }
+}
+.winner-layer .winner-announcement { animation: winner-layer-pop .22s ease-out; }
+@keyframes winner-layer-pop { from { opacity:0; transform: scale(.96); } to { opacity:1; transform: scale(1); } }

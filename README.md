@@ -90,3 +90,15 @@ Adds winner announcement banners on the table after payouts, including who won, 
 ## v0.3.6
 
 Mobile UI cleanup: account/password panel exposed in the top bar, pot badge moved away from community cards, 3-action Fold/Check/Bet controls, compact multi-board layout, smaller hero cards, and smaller empty seats on iPhone.
+
+## v0.3.7 notes
+
+- Adds branded PWA/social icons: `/icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png`, `/og-image.png`, and `/romulus-icon.svg`.
+- Adds table game mode: Dealer Choice or Random.
+- Dealer Choice waits after a resolved hand and shows the next dealer game buttons on the table.
+- Random mode uses the checked game pool in the table controls.
+- Adds a visible in-game game-name banner.
+- Adds visual one-card-at-a-time hole-card dealing animation.
+- Moves the winner banner into a top-level overlay so player pods no longer cover it.
+
+Run the updated `supabase/schema.sql` once so existing tables get `game_selection_mode` and `random_game_ids`.

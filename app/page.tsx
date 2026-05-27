@@ -38,6 +38,8 @@ type PokerTable = {
   require_result_approval: boolean;
   status: string;
   current_game_id?: string | null;
+  game_selection_mode?: "dealer-choice" | "random" | null;
+  random_game_ids?: string[] | null;
   button_seat?: number | null;
   paused?: boolean | null;
   created_at: string;
@@ -517,6 +519,8 @@ export default function HomePage() {
         action_clock_seconds: 30,
         require_result_approval: true,
         current_game_id: "nlh",
+        game_selection_mode: "dealer-choice",
+        random_game_ids: GAME_CATALOG.map((game) => game.id),
         button_seat: 1,
       })
       .select("*")
@@ -695,7 +699,11 @@ export default function HomePage() {
   }
 
   async function chooseRandomGame() {
+    const randomIds = activeTable?.random_game_ids?.length
+      ? activeTable.random_game_ids
+      : GAME_CATALOG.map((game) => game.id);
     const playable = GAME_CATALOG.filter((game) =>
+      randomIds.includes(game.id) &&
       playableWith(game, seatedPlayers.length || 1),
     );
     const game =
@@ -703,7 +711,30 @@ export default function HomePage() {
     await chooseGame(game.id);
   }
 
-  async function startHand(options?: { force?: boolean; reason?: string }) {
+  async function updateRandomGamePool(gameId: string, checked: boolean) {
+    const current = activeTable?.random_game_ids?.length
+      ? activeTable.random_game_ids
+      : GAME_CATALOG.map((game) => game.id);
+    const next = checked
+      ? [...new Set([...current, gameId])]
+      : current.filter((id) => id !== gameId);
+    await updateTablePatch({ random_game_ids: next.length ? next : [gameId] });
+  }
+
+  async function chooseGameAndStart(gameId: string) {
+    const game = findGame(gameId);
+    await updateTablePatch({ current_game_id: game.id });
+    if (activeTableId && profile) {
+      await postSystemMessage(activeTableId, `${profile.display_name} chose ${game.displayName}.`);
+    }
+    await startHand({
+      force: true,
+      reason: `Starting ${game.displayName}…`,
+      gameIdOverride: game.id,
+    });
+  }
+
+  async function startHand(options?: { force?: boolean; reason?: string; gameIdOverride?: string }) {
     try {
       setNotice(options?.reason ?? "Starting hand…");
 
@@ -782,7 +813,23 @@ export default function HomePage() {
         return;
       }
 
-      const gameId = table.current_game_id || "nlh";
+      let gameId = options?.gameIdOverride || table.current_game_id || "nlh";
+      if (table.game_selection_mode === "random" && !options?.gameIdOverride) {
+        const randomIds = table.random_game_ids?.length
+          ? table.random_game_ids
+          : GAME_CATALOG.map((gameOption) => gameOption.id);
+        const randomPool = GAME_CATALOG.filter(
+          (gameOption) =>
+            randomIds.includes(gameOption.id) && playableWith(gameOption, activeSeats.length),
+        );
+        const randomGame =
+          randomPool[Math.floor(Math.random() * randomPool.length)] ?? GAME_CATALOG[0];
+        gameId = randomGame.id;
+        await supabase
+          .from("tables")
+          .update({ current_game_id: gameId })
+          .eq("id", activeTableId);
+      }
       const game = findGame(gameId);
       if (!playableWith(game, activeSeats.length)) {
         setNotice(
@@ -957,6 +1004,10 @@ export default function HomePage() {
 
   function scheduleNextHand(completedHandId: string) {
     if (!autoStartNextHand || !activeTableId || activeTable?.paused) return;
+    if ((activeTable?.game_selection_mode ?? "dealer-choice") === "dealer-choice") {
+      setNotice("Hand complete. Waiting for the next dealer to choose a game.");
+      return;
+    }
     if (autoNextHandKeyRef.current === completedHandId) return;
     autoNextHandKeyRef.current = completedHandId;
     window.setTimeout(() => {
@@ -1397,8 +1448,20 @@ export default function HomePage() {
     ? seats.find((seat) => seat.user_id === profile.id)
     : null;
   const selectedGame = findGame(activeTable?.current_game_id || "nlh");
+  const gameSelectionMode = activeTable?.game_selection_mode ?? "dealer-choice";
+  const randomGameIds = activeTable?.random_game_ids?.length
+    ? activeTable.random_game_ids
+    : GAME_CATALOG.map((game) => game.id);
   const playableGames = GAME_CATALOG.filter((game) =>
     playableWith(game, seatedPlayers.length || 1),
+  );
+  const handIsComplete = activeHand?.summary.gameplayStatus === "complete" || activeHand?.summary.street === "complete";
+  const canChooseNextDealerGame = Boolean(
+    gameSelectionMode === "dealer-choice" &&
+      handIsComplete &&
+      profile &&
+      mySeat &&
+      (mySeat.seat_number === (activeTable?.button_seat ?? 1) || profile.is_admin),
   );
   const secondsLeft = useMemo(() => {
     if (!activeTable?.action_deadline) return null;
@@ -1918,24 +1981,68 @@ export default function HomePage() {
             </div>
 
             <div className="card">
-              <h2>Dealer Choice</h2>
+              <h2>Game Mode</h2>
               <label>
-                Choose game
+                Mode
                 <select
-                  value={selectedGame.id}
-                  onChange={(event) => chooseGame(event.target.value)}
+                  value={gameSelectionMode}
+                  onChange={(event) =>
+                    updateTablePatch({
+                      game_selection_mode: event.target.value as PokerTable["game_selection_mode"],
+                    })
+                  }
                 >
-                  {playableGames.map((game) => (
-                    <option key={game.id} value={game.id}>
-                      {game.displayName}
-                    </option>
-                  ))}
+                  <option value="dealer-choice">Dealer choice after each hand</option>
+                  <option value="random">Random from checked games</option>
                 </select>
               </label>
               <br />
-              <button className="secondary" onClick={chooseRandomGame}>
-                Random Game
-              </button>
+              {gameSelectionMode === "dealer-choice" ? (
+                <>
+                  <p className="muted">
+                    After each hand resolves, the next dealer gets game-choice buttons on the table.
+                  </p>
+                  <label>
+                    Current game
+                    <select
+                      value={selectedGame.id}
+                      onChange={(event) => chooseGame(event.target.value)}
+                    >
+                      {playableGames.map((game) => (
+                        <option key={game.id} value={game.id}>
+                          {game.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <p className="muted">
+                    Romulus will pick the next hand at random from the checked playable games.
+                  </p>
+                  <div className="random-game-list">
+                    {GAME_CATALOG.map((game) => {
+                      const isPlayable = playableWith(game, seatedPlayers.length || 1);
+                      return (
+                        <label className="toggle-row" key={game.id}>
+                          <input
+                            type="checkbox"
+                            checked={randomGameIds.includes(game.id)}
+                            disabled={!isPlayable}
+                            onChange={(event) => updateRandomGamePool(game.id, event.target.checked)}
+                          />
+                          {game.displayName}
+                          {!isPlayable && <span className="muted"> · not enough cards</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button className="secondary" onClick={chooseRandomGame}>
+                    Pick Random Now
+                  </button>
+                </>
+              )}
               <hr />
               <label>
                 Bomb pot amount
@@ -2056,6 +2163,9 @@ export default function HomePage() {
               activeHand={activeHand}
               seats={seats}
               selectedGameName={selectedGame.displayName}
+              playableGames={playableGames}
+              gameSelectionMode={gameSelectionMode}
+              canChooseNextDealerGame={canChooseNextDealerGame}
               secondsLeft={secondsLeft}
               cardBackTheme={cardBackTheme}
               feltTheme={feltTheme}
@@ -2081,6 +2191,8 @@ export default function HomePage() {
               onApproveResult={approveResult}
               onAwardPot={awardPotTo}
               onKick={standUp}
+              onAccountOpen={() => setShowAccountPanel(true)}
+              onChooseGameAndStart={chooseGameAndStart}
               winnerAnnouncement={winnerAnnouncement}
             />
           </section>
@@ -2281,6 +2393,9 @@ type PokerRoomProps = {
   activeHand: Hand | null;
   seats: Seat[];
   selectedGameName: string;
+  playableGames: typeof GAME_CATALOG;
+  gameSelectionMode: "dealer-choice" | "random";
+  canChooseNextDealerGame: boolean;
   secondsLeft: number | null;
   cardBackTheme: CardBackTheme;
   feltTheme: "green" | "blue" | "burgundy" | "black";
@@ -2310,6 +2425,8 @@ type PokerRoomProps = {
   onApproveResult: () => void;
   onAwardPot: (userId: string) => void;
   onKick: (userId: string) => void;
+  onAccountOpen: () => void;
+  onChooseGameAndStart: (gameId: string) => void;
   winnerAnnouncement: WinnerAnnouncement | null;
 };
 
@@ -2319,6 +2436,9 @@ function PokerRoom({
   activeHand,
   seats,
   selectedGameName,
+  playableGames,
+  gameSelectionMode,
+  canChooseNextDealerGame,
   secondsLeft,
   cardBackTheme,
   feltTheme,
@@ -2340,6 +2460,8 @@ function PokerRoom({
   onApproveResult,
   onAwardPot,
   onKick,
+  onAccountOpen,
+  onChooseGameAndStart,
   winnerAnnouncement,
 }: PokerRoomProps) {
   const mySeat = profile
@@ -2369,6 +2491,62 @@ function PokerRoom({
   const tableClass = `poker-room room-${roomTheme} felt-${feltTheme} boards-${boardCount} ${boardCount >= 2 ? "multi-board" : "single-board"}`;
   const pointerStart = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTapTime = useRef(0);
+  const [dealTick, setDealTick] = useState(Date.now());
+
+  useEffect(() => {
+    if (!activeHand) return;
+    setDealTick(Date.now());
+    const timer = window.setInterval(() => setDealTick(Date.now()), 120);
+    return () => window.clearInterval(timer);
+  }, [activeHand?.id]);
+
+  const dealRevealByUserId = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (!activeHand) return counts;
+    const players = (activeHand.summary.players ?? [])
+      .filter((player) => player.inHand)
+      .sort((a, b) => {
+        const dealer = activeHand.summary.dealerSeat ?? 1;
+        const ao = (a.seatNumber - dealer - 1 + MAX_TABLE_SEATS) % MAX_TABLE_SEATS;
+        const bo = (b.seatNumber - dealer - 1 + MAX_TABLE_SEATS) % MAX_TABLE_SEATS;
+        return ao - bo;
+      });
+    if (!players.length) return counts;
+    const maxCards = Math.max(
+      ...players.map((player) => activeHand.summary.holeCardsByUserId?.[player.userId]?.length ?? 0),
+    );
+    const startTime = new Date(activeHand.created_at).getTime();
+    const elapsed = dealTick - startTime;
+    const totalSteps = maxCards * players.length;
+    const visibleStep = Math.floor((elapsed - 260) / 135);
+    if (
+      elapsed > totalSteps * 135 + 900 ||
+      activeHand.summary.street === "complete" ||
+      activeHand.summary.gameplayStatus === "complete"
+    ) {
+      for (const player of players) {
+        counts[player.userId] = activeHand.summary.holeCardsByUserId?.[player.userId]?.length ?? 0;
+      }
+      return counts;
+    }
+    for (const player of players) counts[player.userId] = 0;
+    let step = 0;
+    for (let cardIndex = 0; cardIndex < maxCards; cardIndex++) {
+      for (const player of players) {
+        const cardCount = activeHand.summary.holeCardsByUserId?.[player.userId]?.length ?? 0;
+        if (cardIndex < cardCount && visibleStep >= step) {
+          counts[player.userId] = (counts[player.userId] ?? 0) + 1;
+        }
+        step += 1;
+      }
+    }
+    return counts;
+  }, [activeHand?.id, activeHand?.created_at, activeHand?.summary.street, activeHand?.summary.gameplayStatus, dealTick]);
+
+  const myVisibleHoleCards = myHoleCards.slice(
+    0,
+    dealRevealByUserId[profile?.id ?? ""] ?? myHoleCards.length,
+  );
 
   function handleGestureStart(event: PointerEvent<HTMLElement>) {
     pointerStart.current = {
@@ -2455,6 +2633,9 @@ function PokerRoom({
           </div>
         </div>
         <div className="row room-actions">
+          <button className="secondary" onClick={onAccountOpen}>
+            Account
+          </button>
           <button className="secondary" onClick={onPauseToggle}>
             {activeTable?.paused ? "Resume" : "Pause"}
           </button>
@@ -2474,6 +2655,7 @@ function PokerRoom({
           <div className="table-rail" />
           <div className="table-felt">
             <div className="table-logo">ROMULUS</div>
+            <div className="game-name-banner">{selectedGameName}</div>
             <div className="pot-badge">
               <span className="mini-chip-stack"><i /><i /><i /></span>
               <strong>Pot {potDollars}</strong>
@@ -2484,28 +2666,6 @@ function PokerRoom({
               </small>
             </div>
 
-            {winnerAnnouncement && (
-              <div className="winner-announcement" aria-live="polite">
-                <div className="winner-kicker">Hand #{winnerAnnouncement.handNumber} result</div>
-                <strong>{winnerAnnouncement.primaryBanner}</strong>
-                {winnerAnnouncement.details.length > 0 && (
-                  <div className="winner-details">
-                    {winnerAnnouncement.details.map((detail) => (
-                      <span key={detail}>{detail}</span>
-                    ))}
-                  </div>
-                )}
-                {winnerAnnouncement.banners.length > 1 && (
-                  <div className="winner-splits">
-                    {winnerAnnouncement.banners.map((banner) => (
-                      <span key={`${winnerAnnouncement.handId}-${banner.userId}-${banner.kind}`}>
-                        {banner.name}: {centsToDollars(banner.amountCents)} · {banner.reason}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             <div className="community-zone">
               {activeHand ? (
@@ -2543,6 +2703,10 @@ function PokerRoom({
           const isMe = Boolean(seat && profile && seat.user_id === profile.id);
           const holeCards =
             activeHand?.summary.holeCardsByUserId?.[seat?.user_id ?? ""] ?? [];
+          const visibleHoleCount = seat
+            ? (dealRevealByUserId[seat.user_id] ?? holeCards.length)
+            : 0;
+          const visuallyDealtHoleCards = holeCards.slice(0, visibleHoleCount);
           const visibleCards =
             activeHand?.summary.visibleCardsByUserId?.[seat?.user_id ?? ""] ??
             [];
@@ -2605,16 +2769,16 @@ function PokerRoom({
                       deckMode={deckMode}
                     />
                   )}
-                  {holeCards.length > 0 && canSeeHole && (
+                  {visuallyDealtHoleCards.length > 0 && canSeeHole && (
                     <CardRow
-                      cards={holeCards}
+                      cards={visuallyDealtHoleCards}
                       label={isMe ? undefined : isShowdownRevealed ? "Showdown" : "Shown"}
                       deckMode={deckMode}
                     />
                   )}
-                  {holeCards.length > 0 && !canSeeHole && (
+                  {visibleHoleCount > 0 && !canSeeHole && (
                     <CardBacks
-                      count={isMe ? Math.min(holeCards.length, 6) : Math.min(holeCards.length, 2)}
+                      count={isMe ? Math.min(visibleHoleCount, 6) : Math.min(visibleHoleCount, 2)}
                       color={cardBackTheme}
                     />
                   )}
@@ -2648,6 +2812,51 @@ function PokerRoom({
             </div>
           );
         })}
+
+        {winnerAnnouncement && (
+          <div className="winner-layer" aria-live="polite">
+            <div className="winner-announcement">
+              <div className="winner-kicker">Hand #{winnerAnnouncement.handNumber} result</div>
+              <strong>{winnerAnnouncement.primaryBanner}</strong>
+              {winnerAnnouncement.details.length > 0 && (
+                <div className="winner-details">
+                  {winnerAnnouncement.details.map((detail) => (
+                    <span key={detail}>{detail}</span>
+                  ))}
+                </div>
+              )}
+              {winnerAnnouncement.banners.length > 1 && (
+                <div className="winner-splits">
+                  {winnerAnnouncement.banners.map((banner) => (
+                    <span key={`${winnerAnnouncement.handId}-${banner.userId}-${banner.kind}`}>
+                      {banner.name}: {centsToDollars(banner.amountCents)} · {banner.reason}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {gameSelectionMode === "dealer-choice" && activeHand?.summary.gameplayStatus === "complete" && (
+          <div className="dealer-choice-overlay">
+            <div>
+              <strong>Dealer choice</strong>
+              <span>Seat {activeTable?.button_seat ?? 1} chooses the next game.</span>
+            </div>
+            {canChooseNextDealerGame ? (
+              <div className="dealer-choice-buttons">
+                {playableGames.map((game) => (
+                  <button key={game.id} className="secondary" onClick={() => onChooseGameAndStart(game.id)}>
+                    {game.displayName}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">Waiting for the dealer to choose.</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="hero-action-tray iphone-action-tray">
@@ -2665,7 +2874,7 @@ function PokerRoom({
               Your hand · double tap to check · swipe still works
             </small>
             {myHoleCards.length ? (
-              <CardRow cards={myHoleCards} deckMode={deckMode} hero />
+              <CardRow cards={myVisibleHoleCards} deckMode={deckMode} hero />
             ) : (
               <div className="muted">No private cards yet.</div>
             )}
