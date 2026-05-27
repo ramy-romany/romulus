@@ -29,6 +29,11 @@ export type AceyDuecyState = {
   mustBetAfterReplace: boolean;
   passCostCents: number;
   minBetCents: number;
+  pairPenaltyCents?: number;
+  waitingForAceChoice?: boolean;
+  aceAsHigh?: boolean | null;
+  awaitingNextTurn?: boolean;
+  outcomeKind?: 'win' | 'lose' | 'penalty' | 'pass' | 'new-deck';
   replaceMinBetCents: number;
   replacePenaltyCents: number;
   maxBetCents: number;
@@ -105,9 +110,13 @@ function draw(deck: Card[], count: number): Card[] {
   return deck.splice(0, count);
 }
 
-function dealAceyOuterCards(deck: Card[]): { leftCard: Card; rightCard: Card } {
-  const [leftCard, rightCard] = draw(deck, 2);
-  return { leftCard, rightCard };
+function dealAceyOuterCards(deck: Card[]): { leftCard: Card; rightCard: Card | null; waitingForAceChoice: boolean } {
+  const [leftCard] = draw(deck, 1);
+  if (leftCard?.rank === 'A') {
+    return { leftCard, rightCard: null, waitingForAceChoice: true };
+  }
+  const [rightCard] = draw(deck, 1);
+  return { leftCard, rightCard, waitingForAceChoice: false };
 }
 
 export function createInitialHandState(args: {
@@ -125,7 +134,7 @@ export function createInitialHandState(args: {
 
   if (game.id === 'acey-deucey') {
     const firstPlayer = activePlayers[0];
-    const { leftCard, rightCard } = dealAceyOuterCards(deck);
+    const { leftCard, rightCard, waitingForAceChoice } = dealAceyOuterCards(deck);
     const postedCentsByUserId: Record<string, number> = {};
     for (const player of activePlayers) postedCentsByUserId[player.user_id] = args.bombPotCents;
     return {
@@ -138,7 +147,7 @@ export function createInitialHandState(args: {
       deck,
       holeCardsByUserId: {},
       visibleCardsByUserId: {},
-      boards: [{ id: 'Acey Deucey', cards: [leftCard, rightCard] }],
+      boards: [{ id: 'Acey Deucey', cards: [leftCard, ...(rightCard ? [rightCard] : [])] }],
       potCents: activePlayers.length * args.bombPotCents,
       postedCentsByUserId,
       startedAt: new Date().toISOString(),
@@ -156,9 +165,13 @@ export function createInitialHandState(args: {
         rightCard,
         middleCard: null,
         hasReplaced: false,
+        waitingForAceChoice,
+        aceAsHigh: null,
+        awaitingNextTurn: false,
+        pairPenaltyCents: 2500,
         mustBetAfterReplace: false,
         passCostCents: 500,
-        minBetCents: 500,
+        minBetCents: 1000,
         replaceMinBetCents: 5000,
         replacePenaltyCents: 10000,
         maxBetCents: 100000,

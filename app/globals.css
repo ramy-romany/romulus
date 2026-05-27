@@ -975,3 +975,48 @@ button.secondary.danger { border-color: rgba(251,113,133,.48); color: #ffd6dc; b
   .winner-layer { padding-top: 84px; }
   .winner-layer .winner-announcement { max-height: 44vh; }
 }
+
+/* v0.4 cleanup: keep active gameplay focused on the table; settings/chat/log/settlement live in icon panels. */
+.table-grid { display: block; }
+.table-grid > aside { display: none !important; }
+.icon-button { min-width: 42px; padding: 0.55rem 0.65rem; font-size: 1.05rem; }
+.table-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.62);
+  padding: max(16px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+}
+.table-modal-card {
+  width: min(980px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border-radius: 22px;
+  padding: 18px;
+  background: rgba(17, 13, 20, 0.96);
+  border: 1px solid rgba(255,255,255,0.16);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.settings-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items: start; }
+.message-list.tall { max-height: 62vh; overflow: auto; }
+.acey-result-banner {
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-weight: 800;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.1);
+}
+.acey-result-banner.win { background: rgba(21, 170, 92, 0.25); }
+.acey-result-banner.lose { background: rgba(210, 70, 70, 0.25); }
+.acey-result-banner.penalty { background: rgba(232, 151, 42, 0.28); }
+@media (max-width: 760px) {
+  .room-topbar { gap: 6px; }
+  .room-actions { gap: 4px; flex-wrap: nowrap; }
+  .icon-button { min-width: 34px; padding: 0.42rem 0.48rem; font-size: 0.95rem; }
+  .table-modal-card { border-radius: 18px; padding: 14px; }
+}
